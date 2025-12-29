@@ -13,7 +13,7 @@ type Metric struct {
 	Tag       string `gorm:"type:text;not null;index:idx_metric_project_id_tag_created_at,priority:2" json:"tag"`
 	Increment int64  `gorm:"not null;default:0" json:"increment"`
 
-	CreatedAt time.Time `gorm:"autoCreateTime;not null;default:CURRENT_TIMESTAMP;index:idx_metric_project_id_tag_created_at,priority:3" json:"created_at"`
+	CreatedAt time.Time `gorm:"autoCreateTime;not null;default:CURRENT_TIMESTAMP;index:idx_metric_project_id_tag_created_at,priority:3;index:idx_metric_created_at" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
 
 	// Metric <-> Project

@@ -38,7 +38,7 @@ type AssetReference struct {
 
 	// Timestamps
 	CreatedAt time.Time `gorm:"autoCreateTime;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime;not null;default:CURRENT_TIMESTAMP" json:"updated_at"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime;not null;default:CURRENT_TIMESTAMP;index:idx_asset_reference_updated_at" json:"updated_at"`
 
 	// Optional: Last referenced timestamp to help with garbage collection
 	LastReferencedAt time.Time `gorm:"type:timestamp;index" json:"last_referenced_at"`
