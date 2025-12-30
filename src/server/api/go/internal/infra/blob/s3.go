@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/bytedance/sonic"
+	"github.com/gabriel-vasile/mimetype"
 	"github.com/memodb-io/Acontext/internal/config"
 	"github.com/memodb-io/Acontext/internal/modules/model"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
@@ -278,7 +279,9 @@ func (u *S3Deps) UploadFormFile(ctx context.Context, keyPrefix string, fh *multi
 	sumHex := hex.EncodeToString(h.Sum(nil))
 
 	ext := strings.ToLower(filepath.Ext(fh.Filename))
-	contentType := fh.Header.Get("Content-Type")
+
+	// Detect MIME type from file content (don't trust client-provided Content-Type)
+	contentType := mimetype.Detect(fileContent).String()
 
 	return u.uploadWithDedup(
 		ctx,
