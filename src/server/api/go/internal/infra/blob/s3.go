@@ -322,6 +322,46 @@ func (u *S3Deps) UploadJSON(ctx context.Context, keyPrefix string, data interfac
 	)
 }
 
+// UploadFileDirect uploads a file directly to S3 at the specified key (no deduplication)
+// This is used when you need to preserve the exact file structure
+func (u *S3Deps) UploadFileDirect(ctx context.Context, key string, content []byte, contentType string) (*model.Asset, error) {
+	if key == "" {
+		return nil, errors.New("key is empty")
+	}
+
+	// Calculate SHA256
+	h := sha256.New()
+	h.Write(content)
+	sumHex := hex.EncodeToString(h.Sum(nil))
+
+	input := &s3.PutObjectInput{
+		Bucket:      aws.String(u.Bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(content),
+		ContentType: aws.String(contentType),
+		Metadata: map[string]string{
+			"sha256": sumHex,
+		},
+	}
+	if u.SSE != nil {
+		input.ServerSideEncryption = *u.SSE
+	}
+
+	out, err := u.Uploader.Upload(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.Asset{
+		Bucket: u.Bucket,
+		S3Key:  key,
+		ETag:   cleanETag(*out.ETag),
+		SHA256: sumHex,
+		MIME:   contentType,
+		SizeB:  int64(len(content)),
+	}, nil
+}
+
 // DownloadJSON downloads JSON data from S3 and unmarshals it into the provided interface
 func (u *S3Deps) DownloadJSON(ctx context.Context, key string, target interface{}) error {
 	result, err := u.Client.GetObject(ctx, &s3.GetObjectInput{
@@ -428,6 +468,57 @@ func (u *S3Deps) DeleteObjects(ctx context.Context, keys []string) error {
 		if err != nil {
 			return fmt.Errorf("delete objects from S3: %w", err)
 		}
+	}
+
+	return nil
+}
+
+// DeleteObjectsByPrefix recursively deletes all objects with the given prefix
+// This is equivalent to deleting an entire "directory" in S3
+func (u *S3Deps) DeleteObjectsByPrefix(ctx context.Context, prefix string) error {
+	if prefix == "" {
+		return errors.New("prefix is empty")
+	}
+
+	// Ensure prefix ends with "/" to list all objects under this directory
+	prefixWithSlash := prefix
+	if !strings.HasSuffix(prefix, "/") {
+		prefixWithSlash = prefix + "/"
+	}
+
+	// List all objects with pagination support
+	var allKeys []string
+	listInput := &s3.ListObjectsV2Input{
+		Bucket: &u.Bucket,
+		Prefix: &prefixWithSlash,
+	}
+
+	var continuationToken *string
+	for {
+		listInput.ContinuationToken = continuationToken
+		result, err := u.Client.ListObjectsV2(ctx, listInput)
+		if err != nil {
+			return fmt.Errorf("list objects from S3: %w", err)
+		}
+
+		if result.Contents != nil {
+			for _, obj := range result.Contents {
+				if obj.Key != nil {
+					allKeys = append(allKeys, *obj.Key)
+				}
+			}
+		}
+
+		// Check if there are more pages
+		if !aws.ToBool(result.IsTruncated) {
+			break
+		}
+		continuationToken = result.NextContinuationToken
+	}
+
+	// Delete all found objects in batches
+	if len(allKeys) > 0 {
+		return u.DeleteObjects(ctx, allKeys)
 	}
 
 	return nil
