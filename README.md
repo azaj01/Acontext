@@ -239,7 +239,22 @@ graph TB
 
 
 
-# 🚀 Start the Backend Locally
+# 🚀 Connect to Acontext
+
+1. Go to [Acontext.io](https://acontext.io), claim your free credits.
+2. Go through a one-click onboarding to get your API Key: `sk-ac-xxx`
+
+<div align="center">
+    <picture>
+      <img alt="Dashboard" src="./assets/onboard.png" width="80%">
+    </picture>
+</div>
+
+
+
+
+<details>
+<summary>💻 Self-host Acontext</summary>
 
 We have an `acontext-cli` to help you do quick proof-of-concept. Download it first in your terminal:
 
@@ -267,6 +282,7 @@ Once it's done, you can access the following endpoints:
 - Acontext API Base URL: http://localhost:8029/api/v1
 - Acontext Dashboard: http://localhost:3000/
 
+</details>
 
 
 
@@ -329,15 +345,18 @@ npm i @acontext/acontext # for Typescript
 ## Initialize Client
 
 ```python
+import os
 from acontext import AcontextClient
 
 client = AcontextClient(
-    base_url="http://localhost:8029/api/v1",
-    api_key="sk-ac-your-root-api-bearer-token"
+    api_key=os.getenv("ACONTEXT_API_KEY"),
 )
-client.ping()
 
-# yes, the default api_key is sk-ac-your-root-api-bearer-token
+# If you're using self-hosted Acontext:
+# client = AcontextClient(
+#     base_url="http://localhost:8029/api/v1",
+#     api_key="sk-ac-your-root-api-bearer-token",
+# )
 ```
 
 > [📖 async client doc](https://docs.acontext.io/settings/core)
