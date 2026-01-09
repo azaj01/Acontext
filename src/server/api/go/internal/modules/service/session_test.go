@@ -756,6 +756,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				// Mock PopGeminiCallIDAndName to return matching name
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("call_abc123", "get_weather", nil)
 				repo.On("CreateMessageWithAssets", ctx, mock.AnythingOfType("*model.Message")).Return(nil)
@@ -781,6 +788,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				// Mock PopGeminiCallIDAndName to return different name
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("call_abc123", "calculate", nil)
 			},
@@ -798,6 +812,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				// Mock PopGeminiCallIDAndName to return matching name and ID
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("call_abc123", "get_weather", nil)
 				repo.On("CreateMessageWithAssets", ctx, mock.AnythingOfType("*model.Message")).Return(nil)
@@ -817,6 +838,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				// Mock PopGeminiCallIDAndName to return matching name but different ID
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("call_abc123", "get_weather", nil)
 			},
@@ -834,6 +862,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				// Mock PopGeminiCallIDAndName to return matching ID but different name
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("call_abc123", "calculate", nil)
 			},
@@ -851,7 +886,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
-				// No repo calls expected
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 			},
 			wantErr: true,
 			errMsg:  "missing function name",
@@ -867,7 +908,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
-				// No repo calls expected
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 			},
 			wantErr: true,
 			errMsg:  "invalid function name",
@@ -883,6 +930,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				// Mock PopGeminiCallIDAndName to return error (no available calls)
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("", "", fmt.Errorf("no available Gemini call info in session"))
 			},
@@ -903,6 +957,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				// First call
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("call_abc123", "get_weather", nil).Once()
 				// Second call
@@ -927,6 +988,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				// First call succeeds
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("call_abc123", "get_weather", nil).Once()
 				// Second call has name mismatch
@@ -946,7 +1014,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
-				// No repo calls expected
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 			},
 			wantErr: true,
 			errMsg:  "invalid function name",
@@ -962,6 +1036,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 				MessageMeta: map[string]interface{}{"source_format": "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
+				// Mock Get to return valid session
+				repo.On("Get", ctx, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == sessionID
+				})).Return(&model.Session{
+					ID:        sessionID,
+					ProjectID: projectID,
+				}, nil)
 				repo.On("PopGeminiCallIDAndName", ctx, sessionID).Return("call_abc123", "get_weather", nil)
 			},
 			wantErr: true,
