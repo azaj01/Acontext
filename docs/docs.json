@@ -44,13 +44,6 @@
             ]
           },
           {
-            "group": "User Management",
-            "icon": "users",
-            "pages": [
-              "users/index"
-            ]
-          },
-          {
             "group": "Context Engineering",
             "icon": "scissors",
             "pages": [
@@ -105,19 +98,20 @@
             ]
           },
           {
+            "group": "Miscellaneous",
+            "icon": "ellipsis",
+            "pages": [
+              "chore/per-user",
+              "chore/async_python",
+              "chore/badge"
+            ]
+          },
+          {
             "group": "Customization",
             "icon": "gear",
             "pages": [
               "settings/core",
               "settings/runtime"
-            ]
-          },
-          {
-            "group": "Miscellaneous",
-            "icon": "ellipsis",
-            "pages": [
-              "chore/async_python",
-              "chore/badge"
             ]
           }
         ]
