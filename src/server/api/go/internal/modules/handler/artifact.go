@@ -423,9 +423,9 @@ func (h *ArtifactHandler) ListArtifacts(c *gin.Context) {
 //	@Tags			artifact
 //	@Accept			json
 //	@Produce		json
-//	@Param			disk_id	path		string				true	"Disk ID"	Format(uuid)
-//	@Param			query	query		string				true	"Regex pattern to search for"
-//	@Param			limit	query		int					false	"Maximum number of results (default 100, max 1000)"
+//	@Param			disk_id	path	string	true	"Disk ID"	Format(uuid)
+//	@Param			query	query	string	true	"Regex pattern to search for"
+//	@Param			limit	query	int		false	"Maximum number of results (default 100, max 1000)"
 //	@Security		BearerAuth
 //	@Success		200	{object}	serializer.Response{data=[]model.Artifact}
 //	@Router			/disk/{disk_id}/artifact/grep [get]
@@ -469,9 +469,9 @@ func (h *ArtifactHandler) GrepArtifacts(c *gin.Context) {
 //	@Tags			artifact
 //	@Accept			json
 //	@Produce		json
-//	@Param			disk_id	path		string				true	"Disk ID"	Format(uuid)
-//	@Param			query	query		string				true	"Glob pattern (e.g., '**/*.py', '*.txt')"*/
-//	@Param			limit	query		int					false	"Maximum number of results (default 100, max 1000)"
+//	@Param			disk_id	path	string	true	"Disk ID"	Format(uuid)
+//	@Param			query	query	string	true	"Glob pattern (e.g., '**/*.py', '*.txt')"*/
+//	@Param			limit	query	int		false	"Maximum number of results (default 100, max 1000)"
 //	@Security		BearerAuth
 //	@Success		200	{object}	serializer.Response{data=[]model.Artifact}
 //	@Router			/disk/{disk_id}/artifact/glob [get]
