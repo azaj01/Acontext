@@ -1,9 +1,7 @@
-from datetime import datetime
 from dataclasses import dataclass, field
 from sqlalchemy import ForeignKey, Index, Column, String
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.types import DateTime
 from typing import TYPE_CHECKING
 from .base import ORM_BASE, CommonMixin
 from ..utils import asUUID
@@ -28,15 +26,11 @@ class SandboxLog(CommonMixin):
             )
         }
     )
-
+    backend_sandbox_id: str = field(metadata={"db": Column(String, nullable=False)})
     backend_type: str = field(metadata={"db": Column(String, nullable=False)})
+
     history_commands: dict = field(metadata={"db": Column(JSONB, nullable=False)})
-
-    history_files: dict = field(metadata={"db": Column(JSONB, nullable=False)})
-
-    expires_at: datetime = field(
-        metadata={"db": Column(DateTime(timezone=True), nullable=False)},
-    )
+    generated_files: dict = field(metadata={"db": Column(JSONB, nullable=False)})
 
     # Relationships
     project: "Project" = field(

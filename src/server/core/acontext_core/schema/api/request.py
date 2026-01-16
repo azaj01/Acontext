@@ -16,7 +16,25 @@ class ToolRenameRequest(BaseModel):
 
 
 class InsertBlockRequest(BaseModel):
-    parent_id: Optional[asUUID] = Field(None, description="Parent block ID (optional for page/folder types)")
+    parent_id: Optional[asUUID] = Field(
+        None, description="Parent block ID (optional for page/folder types)"
+    )
     props: dict[str, Any] = Field(..., description="Block properties")
     title: str = Field(..., description="Block title")
     type: str = Field(..., description="Block type")
+
+
+class SandboxExecRequest(BaseModel):
+    command: str = Field(..., description="Shell command to execute in the sandbox")
+
+
+class SandboxDownloadRequest(BaseModel):
+    from_sandbox_file: str = Field(..., description="Path to the file in the sandbox")
+    download_to_s3_path: str = Field(..., description="S3 path to upload the file to")
+
+
+class SandboxUploadRequest(BaseModel):
+    from_s3_file: str = Field(..., description="S3 path of the file to download")
+    upload_to_sandbox_path: str = Field(
+        ..., description="Parent directory in the sandbox to upload the file to"
+    )

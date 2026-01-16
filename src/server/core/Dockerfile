@@ -17,6 +17,7 @@ RUN uv sync --frozen --no-dev --no-cache-dir
 
 # Copy the application code
 COPY ./acontext_core /app/acontext_core
+COPY ./routers /app/routers
 COPY ./api.py /app
 
 # Expose port 8000

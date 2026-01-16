@@ -40,3 +40,7 @@ class LearningStatusResponse(BaseModel):
     not_space_digested_count: int = Field(
         ..., description="Number of tasks that are not space digested"
     )
+
+
+class SandboxFileTransferResponse(BaseModel):
+    success: bool = Field(..., description="Whether the file transfer was successful")
