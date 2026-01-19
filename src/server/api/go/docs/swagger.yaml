@@ -429,6 +429,31 @@ definitions:
       updated_at:
         type: string
     type: object
+  model.SandboxLog:
+    properties:
+      backend_sandbox_id:
+        type: string
+      backend_type:
+        type: string
+      created_at:
+        type: string
+      generated_files:
+        items:
+          type: object
+        type: array
+      history_commands:
+        items:
+          type: object
+        type: array
+      id:
+        type: string
+      project_id:
+        type: string
+      updated_at:
+        type: string
+      will_total_alive_seconds:
+        type: integer
+    type: object
   model.Session:
     properties:
       configs:
@@ -583,6 +608,17 @@ definitions:
           $ref: '#/definitions/service.PublicURL'
         description: file_name -> url
         type: object
+    type: object
+  service.GetSandboxLogsOutput:
+    properties:
+      has_more:
+        type: boolean
+      items:
+        items:
+          $ref: '#/definitions/model.SandboxLog'
+        type: array
+      next_cursor:
+        type: string
     type: object
   service.GetTasksOutput:
     properties:
@@ -1916,6 +1952,83 @@ paths:
           console.log(`stdout: ${result.stdout}`);
           console.log(`stderr: ${result.stderr}`);
           console.log(`exit_code: ${result.exit_code}`);
+  /sandbox/logs:
+    get:
+      consumes:
+      - application/json
+      description: Get sandbox logs for the project with cursor-based pagination
+      parameters:
+      - description: Limit of sandbox logs to return, default 20. Max 200.
+        in: query
+        name: limit
+        type: integer
+      - description: Cursor for pagination. Use the cursor from the previous response
+          to get the next page.
+        in: query
+        name: cursor
+        type: string
+      - description: Order by created_at descending if true, ascending if false (default
+          false)
+        example: false
+        in: query
+        name: time_desc
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/serializer.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/service.GetSandboxLogsOutput'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get sandbox logs
+      tags:
+      - sandbox
+      x-code-samples:
+      - label: Python
+        lang: python
+        source: |
+          from acontext import AcontextClient
+
+          client = AcontextClient(api_key='sk_project_token')
+
+          # Get sandbox logs
+          logs = client.sandboxes.get_logs(limit=20, time_desc=True)
+          for log in logs.items:
+              print(f"Log {log.id}: {log.backend_type}")
+
+          # If there are more logs, use the cursor for pagination
+          if logs.has_more:
+              next_logs = client.sandboxes.get_logs(
+                  limit=20,
+                  cursor=logs.next_cursor
+              )
+      - label: JavaScript
+        lang: javascript
+        source: |
+          import { AcontextClient } from '@acontext/acontext';
+
+          const client = new AcontextClient({ apiKey: 'sk_project_token' });
+
+          // Get sandbox logs
+          const logs = await client.sandboxes.getLogs({ limit: 20, timeDesc: true });
+          for (const log of logs.items) {
+            console.log(`Log ${log.id}: ${log.backend_type}`);
+          }
+
+          // If there are more logs, use the cursor for pagination
+          if (logs.hasMore) {
+            const nextLogs = await client.sandboxes.getLogs({
+              limit: 20,
+              cursor: logs.nextCursor
+            });
+          }
   /session:
     get:
       consumes:

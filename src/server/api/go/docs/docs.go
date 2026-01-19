@@ -1242,6 +1242,79 @@ const docTemplate = `{
                 ]
             }
         },
+        "/sandbox/logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Get sandbox logs for the project with cursor-based pagination",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sandbox"
+                ],
+                "summary": "Get sandbox logs",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Limit of sandbox logs to return, default 20. Max 200.",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cursor for pagination. Use the cursor from the previous response to get the next page.",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "example": false,
+                        "description": "Order by created_at descending if true, ascending if false (default false)",
+                        "name": "time_desc",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/serializer.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/service.GetSandboxLogsOutput"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                },
+                "x-code-samples": [
+                    {
+                        "label": "Python",
+                        "lang": "python",
+                        "source": "from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Get sandbox logs\nlogs = client.sandboxes.get_logs(limit=20, time_desc=True)\nfor log in logs.items:\n    print(f\"Log {log.id}: {log.backend_type}\")\n\n# If there are more logs, use the cursor for pagination\nif logs.has_more:\n    next_logs = client.sandboxes.get_logs(\n        limit=20,\n        cursor=logs.next_cursor\n    )\n"
+                    },
+                    {
+                        "label": "JavaScript",
+                        "lang": "javascript",
+                        "source": "import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Get sandbox logs\nconst logs = await client.sandboxes.getLogs({ limit: 20, timeDesc: true });\nfor (const log of logs.items) {\n  console.log(` + "`" + `Log ${log.id}: ${log.backend_type}` + "`" + `);\n}\n\n// If there are more logs, use the cursor for pagination\nif (logs.hasMore) {\n  const nextLogs = await client.sandboxes.getLogs({\n    limit: 20,\n    cursor: logs.nextCursor\n  });\n}\n"
+                    }
+                ]
+            }
+        },
         "/sandbox/{sandbox_id}": {
             "delete": {
                 "security": [
@@ -4267,6 +4340,44 @@ const docTemplate = `{
                 }
             }
         },
+        "model.SandboxLog": {
+            "type": "object",
+            "properties": {
+                "backend_sandbox_id": {
+                    "type": "string"
+                },
+                "backend_type": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "generated_files": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "history_commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "will_total_alive_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
         "model.Session": {
             "type": "object",
             "properties": {
@@ -4502,6 +4613,23 @@ const docTemplate = `{
                     "additionalProperties": {
                         "$ref": "#/definitions/service.PublicURL"
                     }
+                }
+            }
+        },
+        "service.GetSandboxLogsOutput": {
+            "type": "object",
+            "properties": {
+                "has_more": {
+                    "type": "boolean"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.SandboxLog"
+                    }
+                },
+                "next_cursor": {
+                    "type": "string"
                 }
             }
         },

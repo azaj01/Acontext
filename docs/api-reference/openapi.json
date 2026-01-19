@@ -890,6 +890,59 @@
         } ]
       }
     },
+    "/sandbox/logs" : {
+      "get" : {
+        "description" : "Get sandbox logs for the project with cursor-based pagination",
+        "parameters" : [ {
+          "description" : "Limit of sandbox logs to return, default 20. Max 200.",
+          "in" : "query",
+          "name" : "limit",
+          "schema" : {
+            "type" : "integer"
+          }
+        }, {
+          "description" : "Cursor for pagination. Use the cursor from the previous response to get the next page.",
+          "in" : "query",
+          "name" : "cursor",
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "description" : "Order by created_at descending if true, ascending if false (default false)",
+          "in" : "query",
+          "name" : "time_desc",
+          "schema" : {
+            "type" : "boolean"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/_sandbox_logs_get_200_response"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "security" : [ {
+          "BearerAuth" : [ ]
+        } ],
+        "summary" : "Get sandbox logs",
+        "tags" : [ "sandbox" ],
+        "x-code-samples" : [ {
+          "label" : "Python",
+          "lang" : "python",
+          "source" : "from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Get sandbox logs\nlogs = client.sandboxes.get_logs(limit=20, time_desc=True)\nfor log in logs.items:\n    print(f\"Log {log.id}: {log.backend_type}\")\n\n# If there are more logs, use the cursor for pagination\nif logs.has_more:\n    next_logs = client.sandboxes.get_logs(\n        limit=20,\n        cursor=logs.next_cursor\n    )\n"
+        }, {
+          "label" : "JavaScript",
+          "lang" : "javascript",
+          "source" : "import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Get sandbox logs\nconst logs = await client.sandboxes.getLogs({ limit: 20, timeDesc: true });\nfor (const log of logs.items) {\n  console.log(`Log ${log.id}: ${log.backend_type}`);\n}\n\n// If there are more logs, use the cursor for pagination\nif (logs.hasMore) {\n  const nextLogs = await client.sandboxes.getLogs({\n    limit: 20,\n    cursor: logs.nextCursor\n  });\n}\n"
+        } ]
+      }
+    },
     "/sandbox/{sandbox_id}" : {
       "delete" : {
         "description" : "Kill a running sandbox",
@@ -3304,6 +3357,46 @@
         },
         "type" : "object"
       },
+      "model.SandboxLog" : {
+        "properties" : {
+          "backend_sandbox_id" : {
+            "type" : "string"
+          },
+          "backend_type" : {
+            "type" : "string"
+          },
+          "created_at" : {
+            "type" : "string"
+          },
+          "generated_files" : {
+            "items" : {
+              "properties" : { },
+              "type" : "object"
+            },
+            "type" : "array"
+          },
+          "history_commands" : {
+            "items" : {
+              "properties" : { },
+              "type" : "object"
+            },
+            "type" : "array"
+          },
+          "id" : {
+            "type" : "string"
+          },
+          "project_id" : {
+            "type" : "string"
+          },
+          "updated_at" : {
+            "type" : "string"
+          },
+          "will_total_alive_seconds" : {
+            "type" : "integer"
+          }
+        },
+        "type" : "object"
+      },
       "model.Session" : {
         "properties" : {
           "configs" : {
@@ -3539,6 +3632,23 @@
             },
             "description" : "file_name -> url",
             "type" : "object"
+          }
+        },
+        "type" : "object"
+      },
+      "service.GetSandboxLogsOutput" : {
+        "properties" : {
+          "has_more" : {
+            "type" : "boolean"
+          },
+          "items" : {
+            "items" : {
+              "$ref" : "#/components/schemas/model.SandboxLog"
+            },
+            "type" : "array"
+          },
+          "next_cursor" : {
+            "type" : "string"
           }
         },
         "type" : "object"
@@ -3861,6 +3971,18 @@
           "properties" : {
             "data" : {
               "$ref" : "#/components/schemas/httpclient.SandboxRuntimeInfo"
+            }
+          },
+          "type" : "object"
+        } ]
+      },
+      "_sandbox_logs_get_200_response" : {
+        "allOf" : [ {
+          "$ref" : "#/components/schemas/serializer.Response"
+        }, {
+          "properties" : {
+            "data" : {
+              "$ref" : "#/components/schemas/service.GetSandboxLogsOutput"
             }
           },
           "type" : "object"
