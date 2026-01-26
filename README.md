@@ -421,7 +421,7 @@ graph TB
     style MQ fill:#ff6600,stroke:#fff,stroke-width:2px,color:#fff
 ```
 
-
+</details>
 
 # 🤝 Stay Together
 
