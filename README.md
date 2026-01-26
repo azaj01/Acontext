@@ -16,77 +16,57 @@
     <a href="https://x.com/acontext_io"><img src="https://img.shields.io/twitter/follow/acontext_io?style=social" alt="Twitter Follow"></a>
     <a href="https://discord.acontext.io"><img src="https://img.shields.io/badge/dynamic/json?label=Acontext&style=flat&query=approximate_member_count&url=https%3A%2F%2Fdiscord.com%2Fapi%2Fv10%2Finvites%2FSG9xJcqVBu%3Fwith_counts%3Dtrue&logo=discord&logoColor=white&suffix=+members&color=36393f&labelColor=5765F2" alt="Acontext Discord"></a>
   </p>
-  <div align="center">
-    <!-- Keep these links. Translations will automatically update with the README. -->
-    <a href="./readme/de/README.md">Deutsch</a> | 
-    <a href="./readme/es/README.md">Español</a> | 
-    <a href="./readme/fr/README.md">Français</a> | 
-    <a href="./readme/ja/README.md">日本語</a> | 
-    <a href="./readme/ko/README.md">한국어</a> | 
-    <a href="./readme/pt/README.md">Português</a> | 
-    <a href="./readme/ru/README.md">Русский</a> | 
-    <a href="./readme/zh/README.md">中文</a>
-  </div>
   <br/>
 </div>
+
 
 
 *Everyone is telling you how to use their agents. But what if YOU need to build an agent for 100,000 users, how would you start?*
 
 **📦 Problem 1: 99% of your DB is just LLM messages.** 
 
-> Poor schema design makes your most valuable data expensive and slow. Acontext handles context storage and retrieval via PG, Redis, and S3. 
+> Acontext handles context storage and retrieval via PG, Redis, and S3 for you. TWO SDKs cover everything
 >
-> ChatGPT, Gemini, Anthropic, images, audio, files... we've got you covered.
+
+**✂️ Problem 1-1: Manage the context window is tricky** 
+
+> Acontext providers many context editing methods to help you limit the context window
 
 **⏰ Problem 2: Long-running agents are a nightmare.** 
 
-> You know context engineering, but you're always writing it from scratch. Acontext comes with built-in context editing methods and a todo agent out of the box.
->
-> Managing agent state? Piece of cake.
+> Acontext has a background agent to track your session state (*i.e.* task, user feedback, progress..)
 
-**👀 Problem 3: You can't see how your agent is doing.** 
+**💻 Problem 3: Move agent from local to cloud breaks things** 
 
-> How satisfied are your users, really? Acontext tracks tasks per session and shows you your agent's actual success rate. 
->
-> Stop obsessing over token costs, improve the agent first.
+> Acontext offers sandbox, file disk and agent skills, all available as the agent tool.
 
-**🧠 Problem 4: Your agent is hit or miss.**
+**👀 Problem 4: You can't see how your agent is doing.** 
 
-> Can it learn from its wins? Acontext's experience agent remembers successful runs and turns them into reusable tool-use SOPs.
->
-> Consistency is everything.
+> Store sessions here, then Acontext tells you the agent daily success rate.
 
 
-
-To solve those problems at once, Acontext becomes the **Context Data Platform**:
 
 <div align="center">
+  	<p>Acontext is the Context Data Platform</p>
     <picture>
-      <img alt="Acontext Learning" src="./assets/acontext-components.jpg" width="100%">
+      <img alt="Acontext Learning" src="./assets/acontext-components.png" width="100%">
     </picture>
-  <p>Context Data Platform that Store, Observe and Learn</p>
 </div>
+
 
 
 # 💡 Core Features
 
 - **Context Engineering**
   - [Session](https://docs.acontext.io/store/messages/multi-provider): unified message storage for any llm, any modal.
+    - [Context Editing](https://docs.acontext.io/engineering/editing) - manage your context window in one api.
   - [Disk](https://docs.acontext.io/store/disk): save/download artifacts with file path.
-  - [Context Editing](https://docs.acontext.io/store/editing) - manage your context window in one api.
+  - [Agent Skills](https://docs.acontext.io/store/skill) - empower your agents with agent skills.
+  - [Sandbox](https://docs.acontext.io/store/sandbox) - run code, analyze data, export artifacts.
 
-<div align="center">
-    <picture>
-      <img alt="Acontext Learning" src="./assets/acontext-context-engineering.png" width="80%">
-    </picture>
-  <p>Context Engineering in Acontext</p>
-</div>
 
 - **Observe agent tasks and user feedback**
   - [Task](https://docs.acontext.io/observe/agent_tasks): collect agent's working status, progress and preferences in near real-time.
-- **Agent self-learning**
-  - [Experience](https://docs.acontext.io/learn/advance/experience-agent): let agent learn SOPs for each user.
 - **View everything in one [dashboard](https://docs.acontext.io/observe/dashboard)**
 
 <div align="center">
@@ -96,142 +76,6 @@ To solve those problems at once, Acontext becomes the **Context Data Platform**:
   <p>Dashboard of Agent Success Rate and Other Metrics</p>
 </div>
 
-
-
-# 🏗️ How it works?
-
-<details>
-<summary>click to open</summary>
-
-```mermaid
-graph TB
-    subgraph "Client Layer"
-        PY["pip install acontext"]
-        TS["npm i @acontext/acontext"]
-    end
-    
-    subgraph "Acontext Backend"
-      subgraph " "
-          API["API<br/>localhost:8029"]
-          CORE["Core"]
-          API -->|FastAPI & MQ| CORE
-      end
-      
-      subgraph " "
-          Infrastructure["Infrastructures"]
-          PG["PostgreSQL"]
-          S3["S3"]
-          REDIS["Redis"]
-          MQ["RabbitMQ"]
-      end
-    end
-    
-    subgraph "Dashboard"
-        UI["Web Dashboard<br/>localhost:3000"]
-    end
-    
-    PY -->|RESTFUL API| API
-    TS -->|RESTFUL API| API
-    UI -->|RESTFUL API| API
-    API --> Infrastructure
-    CORE --> Infrastructure
-
-    Infrastructure --> PG
-    Infrastructure --> S3
-    Infrastructure --> REDIS
-    Infrastructure --> MQ
-    
-    
-    style PY fill:#3776ab,stroke:#fff,stroke-width:2px,color:#fff
-    style TS fill:#3178c6,stroke:#fff,stroke-width:2px,color:#fff
-    style API fill:#00add8,stroke:#fff,stroke-width:2px,color:#fff
-    style CORE fill:#ffd43b,stroke:#333,stroke-width:2px,color:#333
-    style UI fill:#000,stroke:#fff,stroke-width:2px,color:#fff
-    style PG fill:#336791,stroke:#fff,stroke-width:2px,color:#fff
-    style S3 fill:#ff9900,stroke:#fff,stroke-width:2px,color:#fff
-    style REDIS fill:#dc382d,stroke:#fff,stroke-width:2px,color:#fff
-    style MQ fill:#ff6600,stroke:#fff,stroke-width:2px,color:#fff
-```
-
-## How They Work Together
-
-```txt
-┌──────┐    ┌────────────┐    ┌──────────────┐    ┌───────────────┐
-│ User │◄──►│ Your Agent │◄──►│   Session    │    │ Artifact Disk │
-└──────┘    └─────▲──────┘    └──────┬───────┘    └───────────────┘
-                  │                  │ # if enable
-                  │         ┌────────▼────────┐
-                  │         │ Observed Tasks  │
-                  │         └────────┬────────┘
-                  │                  │ # if enable
-                  │         ┌────────▼────────┐
-                  │         │   Learn Skills  │
-                  │         └────────┬────────┘
-                  └──────────────────┘
-                      Search skills
-```
-
-
-
-## Data Structures
-
-<details>
-<summary>📖 Task Structure</summary>
-
-```json
-{
-  "task_description": "Star https://github.com/memodb-io/Acontext",
-  "progresses": [
-    "I have navigated to Acontext repo",
-    "Tried to Star but a pop-up required me to login",
-    ...
-  ],
-  "user_preferences": [
-    "user wants to use outlook email to login"
-  ]
-}
-```
-</details>
-
-
-
-<details>
-<summary>📖 Skill Structure</summary>
-
-
-```json
-{
-    "use_when": "star a repo on github.com",
-    "preferences": "use user's outlook account",
-    "tool_sops": [
-        {"tool_name": "goto", "action": "goto github.com"},
-        {"tool_name": "click", "action": "find login button if any. login first"},
-        ...
-    ]
-}
-```
-
-</details>
-
-
-
-<details>
-<summary>📖 Space Structure</summary>
-
-```txt
-/
-└── github/ (folder)
-    └── GTM (page)
-        ├── find_trending_repos (sop)
-        └── find_contributor_emails (sop)
-    └── basic_ops (page)
-        ├── create_repo (sop)
-        └── delete_repo (sop)
-    ...
-```
-</details>
-
-</details>
 
 
 
@@ -299,9 +143,9 @@ acontext create my-proj --template-path "python/openai-basic"
 
 > More examples on Python:
 >
-> - `python/openai-agent-basic`: self-learning agent in openai agent sdk.
-> - `python/agno-basic`: self-learning agent in agno framework.
-> - `python/openai-agent-artifacts`: agent that can edit and download artifacts.
+> - `python/openai-agent-basic`: openai agent sdk template
+> - `python/agno-basic`: agno framework template
+> - `python/openai-agent-artifacts`: agent can edit and download artifacts.
 
 **Typescript**
 
@@ -311,7 +155,7 @@ acontext create my-proj --template-path "typescript/openai-basic"
 
 > More examples on Typescript:
 >
-> - `typescript/vercel-ai-basic`: self-learning agent in @vercel/ai-sdk
+> - `typescript/vercel-ai-basic`: agent in @vercel/ai-sdk
 
 
 
@@ -526,26 +370,9 @@ for msg in messages:
 client.sessions.flush(session.id)
 
 # Display extracted tasks
-tasks_response = client.sessions.get_tasks(session.id)
-print(tasks_response)
-for task in tasks_response.items:
-    print(f"\nTask #{task.order}:")
-    print(f"  ID: {task.id}")
-    print(f"  Title: {task.data.task_description}")
-    print(f"  Status: {task.status}")
+summary = client.sessions.get_session_summary(session_id)
 
-    # Show progress updates if available
-    if task.data.progresses:
-        print(f"  Progress updates: {len(task.data.progresses)}")
-        for progress in task.data.progresses:
-            print(f"    - {progress}")
-
-    # Show user preferences if available
-    if task.data.user_preferences:
-        print("  User preferences:")
-        for pref in task.data.user_preferences:
-            print(f"    - {pref}")
-
+print("Agent previous tasks:", summary)
 ```
 > `flush` is a blocking call, it will wait for the task extraction to complete.
 > You don't need to call it in production, Acontext has a [buffer mechanism](https://docs.acontext.io/observe/buffer) to ensure the task extraction is completed right on time.
@@ -555,22 +382,21 @@ for task in tasks_response.items:
 Example Task Return:
 
 ```txt
-Task #1:
-  Title: Search for the latest news about iPhone 15 Pro Max and report findings to the user before any landing page coding.
-  Status: success
-  Progress updates: 2
-    - I confirmed that the first step will be reporting before moving on to landing page development.
-    - I have already collected all the iPhone 15 pro max info and reported to the user, waiting for approval for next step.
-  User preferences:
-    - user expects a report on latest news about iPhone 15 pro max before any coding work on the landing page.
-
-Task #2:
-  Title: Initialize a Next.js project for the iPhone 15 Pro Max landing page.
-  Status: pending
-
-Task #3:
-  Title: Deploy the completed landing page to the website.
-  Status: pending
+<task id="1" description="Search for the latest news about iPhone 15 pro max">
+<progress>
+1. Searched and found key specifications
+2. Compiled feature comparison
+</progress>
+<user_preference>
+1. Focus on camera capabilities
+2. Make it mobile-responsive
+</user_preference>
+</task>
+<task id="2" description="Initialize Next.js project">
+<progress>
+1. Created project with latest template
+</progress>
+</task>
 ```
 
 
@@ -586,96 +412,6 @@ You can view the session tasks' statuses in the Dashboard:
 
 
 
-## Self-learning
-
-Acontext can gather a bunch of sessions and learn skills (SOPs) on how to call tools for certain tasks.
-
-### Learn Skills to a `Space` [📖](https://docs.acontext.io/learn/skill-space)
-
-<div align="center">
-    <picture>
-      <img alt="A Space Demo" src="./assets/acontext_dataflow.png" width="100%">
-    </picture>
-  <p>How self-learning works?</p>
-</div>
-
-A `Space` can store skills, and memories in a Notion-like system. You first need to connect a session to `Space` to enable the learning process:
-
-```python
-# Step 1: Create a Space for skill learning
-space = client.spaces.create()
-print(f"Created Space: {space.id}")
-
-# Step 2: Create a session attached to the space
-session = client.sessions.create(space_id=space.id)
-
-# ... push the agent working context
-```
-
-The learning happens in the background and is not real-time (delay around 10-30s). 
-
-What Acontext will do in the background:
-
-```mermaid
-graph LR
-    A[Task Completed] --> B[Task Extraction]
-    B --> C{Space Connected?}
-    C -->|Yes| D[Queue for Learning]
-    C -->|No| E[Skip Learning]
-    D --> F[Extract SOP]
-    F --> G{Hard Enough?}
-    G -->|No - Too Simple| H[Skip Learning]
-    G -->|Yes - Complex| I[Store as Skill Block]
-    I --> J[Available for Future Sessions]
-```
-
-Eventually, SOP blocks with tool-call pattern will be saved to `Space`. You can view every `Space` in the Dashboard:
-
-<div align="center">
-    <picture>
-      <img alt="A Space Demo" src="./docs/images/dashboard/skill_viewer.png" width="100%">
-    </picture>
-  <p>A Space Demo</p>
-</div>
-
-
-
-
-### Search Skills from a `Space` [📖](https://docs.acontext.io/learn/search-skills)
-
-To search skills from a `Space` and use them in the next session:
-
-```python
-result = client.spaces.experience_search(
-    space_id=space.id,
-    query="I need to implement authentication",
-  	mode="fast"
-)
-```
-
-Acontext supports `fast` and `agentic` modes for search. The former uses embeddings to match skills. The latter uses an Experience Agent to explore the entire `Space` and tries to cover every skill needed.
-
-The return is a list of sop blocks, which look like below:
-
-```json
-{
-    "use_when": "star a github repo",
-    "preferences": "use personal account. star but not fork",
-    "tool_sops": [
-        {"tool_name": "goto", "action": "goto the user given github repo url"},
-        {"tool_name": "click", "action": "find login button if any, and start to login first"},
-        ...
-    ]
-}
-```
-
-</details>
-
-
-
-
-
-
 
 # 🔍 Document
 
@@ -688,6 +424,63 @@ To understand what Acontext can do better, please view [our docs](https://docs.a
 Star Acontext on Github to support and receive instant notifications 
 
 ![click_star](./assets/star_acontext.gif)
+
+
+
+# 🏗️ Architecture
+
+<details>
+<summary>click to open</summary>
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        PY["pip install acontext"]
+        TS["npm i @acontext/acontext"]
+    end
+    
+    subgraph "Acontext Backend"
+      subgraph " "
+          API["API<br/>localhost:8029"]
+          CORE["Core"]
+          API -->|FastAPI & MQ| CORE
+      end
+      
+      subgraph " "
+          Infrastructure["Infrastructures"]
+          PG["PostgreSQL"]
+          S3["S3"]
+          REDIS["Redis"]
+          MQ["RabbitMQ"]
+      end
+    end
+    
+    subgraph "Dashboard"
+        UI["Web Dashboard<br/>localhost:3000"]
+    end
+    
+    PY -->|RESTFUL API| API
+    TS -->|RESTFUL API| API
+    UI -->|RESTFUL API| API
+    API --> Infrastructure
+    CORE --> Infrastructure
+
+    Infrastructure --> PG
+    Infrastructure --> S3
+    Infrastructure --> REDIS
+    Infrastructure --> MQ
+    
+    
+    style PY fill:#3776ab,stroke:#fff,stroke-width:2px,color:#fff
+    style TS fill:#3178c6,stroke:#fff,stroke-width:2px,color:#fff
+    style API fill:#00add8,stroke:#fff,stroke-width:2px,color:#fff
+    style CORE fill:#ffd43b,stroke:#333,stroke-width:2px,color:#333
+    style UI fill:#000,stroke:#fff,stroke-width:2px,color:#fff
+    style PG fill:#336791,stroke:#fff,stroke-width:2px,color:#fff
+    style S3 fill:#ff9900,stroke:#fff,stroke-width:2px,color:#fff
+    style REDIS fill:#dc382d,stroke:#fff,stroke-width:2px,color:#fff
+    style MQ fill:#ff6600,stroke:#fff,stroke-width:2px,color:#fff
+```
 
 
 
@@ -707,12 +500,6 @@ Join the community for support and discussions:
 
 
 
-# 📑 LICENSE
-
-This project is currently licensed under [Apache License 2.0](LICENSE).
-
-
-
 # 🥇 Badges
 
 ![Made with Acontext](./assets/badge-made-with-acontext.svg) ![Made with Acontext (dark)](./assets/badge-made-with-acontext-dark.svg)
@@ -722,3 +509,12 @@ This project is currently licensed under [Apache License 2.0](LICENSE).
 
 [![Made with Acontext](https://assets.memodb.io/Acontext/badge-made-with-acontext-dark.svg)](https://acontext.io)
 ```
+
+
+
+
+
+# 📑 LICENSE
+
+This project is currently licensed under [Apache License 2.0](LICENSE).
+
