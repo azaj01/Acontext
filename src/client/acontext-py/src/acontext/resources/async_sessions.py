@@ -84,6 +84,7 @@ class AsyncSessionsAPI:
         user: str | None = None,
         disable_task_tracking: bool | None = None,
         configs: Mapping[str, Any] | None = None,
+        use_uuid: str | None = None,
     ) -> Session:
         """Create a new session.
 
@@ -91,9 +92,14 @@ class AsyncSessionsAPI:
             user: Optional user identifier string. Defaults to None.
             disable_task_tracking: Whether to disable task tracking for this session. Defaults to None (server default: False).
             configs: Optional session configuration dictionary. Defaults to None.
+            use_uuid: Optional UUID string to use as the session ID. If not provided, a UUID will be auto-generated.
+                If a session with this UUID already exists, a 409 Conflict error will be raised.
 
         Returns:
             The created Session object.
+
+        Raises:
+            AcontextAPIError: If use_uuid is invalid or a session with this UUID already exists.
         """
         payload: dict[str, Any] = {}
         if user:
@@ -102,6 +108,8 @@ class AsyncSessionsAPI:
             payload["disable_task_tracking"] = disable_task_tracking
         if configs is not None:
             payload["configs"] = configs
+        if use_uuid is not None:
+            payload["use_uuid"] = use_uuid
         data = await self._requester.request("POST", "/session", json_data=payload)
         return Session.model_validate(data)
 

@@ -1613,7 +1613,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Create a new session. Optionally associate with a user identifier.",
+                "description": "Create a new session. Optionally associate with a user identifier. You can also specify a custom UUID using use_uuid.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1653,18 +1653,30 @@ const docTemplate = `{
                                 }
                             ]
                         }
+                    },
+                    "400": {
+                        "description": "Invalid UUID format",
+                        "schema": {
+                            "$ref": "#/definitions/serializer.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Session with this UUID already exists",
+                        "schema": {
+                            "$ref": "#/definitions/serializer.Response"
+                        }
                     }
                 },
                 "x-code-samples": [
                     {
                         "label": "Python",
                         "lang": "python",
-                        "source": "from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Create a session\nsession = client.sessions.create()\nprint(f\"Created session: {session.id}\")\n\n# Create a session for a specific user\nsession = client.sessions.create(user='alice@acontext.io')\n"
+                        "source": "from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Create a session\nsession = client.sessions.create()\nprint(f\"Created session: {session.id}\")\n\n# Create a session for a specific user\nsession = client.sessions.create(user='alice@acontext.io')\n\n# Create a session with a specific UUID\nsession = client.sessions.create(use_uuid='123e4567-e89b-12d3-a456-426614174000')\n"
                     },
                     {
                         "label": "JavaScript",
                         "lang": "javascript",
-                        "source": "import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Create a session\nconst session = await client.sessions.create();\nconsole.log(` + "`" + `Created session: ${session.id}` + "`" + `);\n\n// Create a session for a specific user\nconst userSession = await client.sessions.create({ user: 'alice@acontext.io' });\n"
+                        "source": "import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Create a session\nconst session = await client.sessions.create();\nconsole.log(` + "`" + `Created session: ${session.id}` + "`" + `);\n\n// Create a session for a specific user\nconst userSession = await client.sessions.create({ user: 'alice@acontext.io' });\n\n// Create a session with a specific UUID\nconst customSession = await client.sessions.create({ useUuid: '123e4567-e89b-12d3-a456-426614174000' });\n"
                     }
                 ]
             }
@@ -2634,6 +2646,10 @@ const docTemplate = `{
                 "disable_task_tracking": {
                     "type": "boolean",
                     "example": false
+                },
+                "use_uuid": {
+                    "type": "string",
+                    "example": "123e4567-e89b-12d3-a456-426614174000"
                 },
                 "user": {
                     "type": "string",

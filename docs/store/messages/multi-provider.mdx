@@ -18,6 +18,22 @@ client = AcontextClient(
 )
 session = client.sessions.create()
 ```
+
+<Tip>
+You can create a session with a specific UUID:
+
+<CodeGroup>
+```python Python
+session = client.sessions.create(use_uuid="123e4567-e89b-12d3-a456-426614174000")
+```
+
+```typescript TypeScript
+const session = await client.sessions.create({ useUuid: "123e4567-e89b-12d3-a456-426614174000" });
+```
+</CodeGroup>
+
+This is useful for correlating sessions with external systems. A 409 Conflict error is returned if the UUID already exists.
+</Tip>
 </Step>
 
 <Step title="Store messages in any format">

@@ -72,10 +72,22 @@ export class SessionsAPI {
     return ListSessionsOutputSchema.parse(data);
   }
 
+  /**
+   * Create a new session.
+   *
+   * @param options - Options for creating a session.
+   * @param options.user - Optional user identifier string.
+   * @param options.disableTaskTracking - Whether to disable task tracking for this session.
+   * @param options.configs - Optional session configuration dictionary.
+   * @param options.useUuid - Optional UUID string to use as the session ID. If not provided, a UUID will be auto-generated.
+   *   If a session with this UUID already exists, a 409 Conflict error will be raised.
+   * @returns The created Session object.
+   */
   async create(options?: {
     user?: string | null;
     disableTaskTracking?: boolean | null;
     configs?: Record<string, unknown>;
+    useUuid?: string | null;
   }): Promise<Session> {
     const payload: Record<string, unknown> = {};
     if (options?.user !== undefined && options?.user !== null) {
@@ -86,6 +98,9 @@ export class SessionsAPI {
     }
     if (options?.configs !== undefined) {
       payload.configs = options.configs;
+    }
+    if (options?.useUuid !== undefined && options?.useUuid !== null) {
+      payload.use_uuid = options.useUuid;
     }
     const data = await this.requester.request('POST', '/session', {
       jsonData: Object.keys(payload).length > 0 ? payload : undefined,

@@ -69,6 +69,57 @@ describe('AcontextClient Unit Tests', () => {
       expect(session.id).toBeDefined();
     });
 
+    test('should create a session with custom UUID', async () => {
+      const customUuid = '123e4567-e89b-12d3-a456-426614174000';
+      const createdSession = mockSession({
+        id: customUuid,
+      });
+      client.mock().onPost('/session', (options) => {
+        expect(options?.jsonData?.use_uuid).toBe(customUuid);
+        return createdSession;
+      });
+
+      const session = await client.sessions.create({
+        useUuid: customUuid,
+      });
+      expect(session).toBeDefined();
+      expect(session.id).toBe(customUuid);
+    });
+
+    test('should create a session without custom UUID', async () => {
+      const createdSession = mockSession();
+      client.mock().onPost('/session', (options) => {
+        expect(options?.jsonData?.use_uuid).toBeUndefined();
+        return createdSession;
+      });
+
+      const session = await client.sessions.create();
+      expect(session).toBeDefined();
+      expect(session.id).toBeDefined();
+    });
+
+    test('should create a session with custom UUID and other options', async () => {
+      const customUuid = '123e4567-e89b-12d3-a456-426614174000';
+      const createdSession = mockSession({
+        id: customUuid,
+        configs: { agent: 'bot1' },
+      });
+      client.mock().onPost('/session', (options) => {
+        expect(options?.jsonData?.use_uuid).toBe(customUuid);
+        expect(options?.jsonData?.user).toBe('alice@acontext.io');
+        expect(options?.jsonData?.configs).toEqual({ agent: 'bot1' });
+        return createdSession;
+      });
+
+      const session = await client.sessions.create({
+        user: 'alice@acontext.io',
+        useUuid: customUuid,
+        configs: { agent: 'bot1' },
+      });
+      expect(session).toBeDefined();
+      expect(session.id).toBe(customUuid);
+    });
+
     test('should store a message in acontext format', async () => {
       const sessionId = 'test-session-id';
       const storedMessage = mockMessage({

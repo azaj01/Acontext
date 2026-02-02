@@ -23,6 +23,9 @@ definitions:
       disable_task_tracking:
         example: false
         type: boolean
+      use_uuid:
+        example: 123e4567-e89b-12d3-a456-426614174000
+        type: string
       user:
         example: alice@acontext.io
         type: string
@@ -2031,6 +2034,7 @@ paths:
       consumes:
       - application/json
       description: Create a new session. Optionally associate with a user identifier.
+        You can also specify a custom UUID using use_uuid.
       parameters:
       - description: CreateSession payload
         in: body
@@ -2050,6 +2054,14 @@ paths:
                 data:
                   $ref: '#/definitions/model.Session'
               type: object
+        "400":
+          description: Invalid UUID format
+          schema:
+            $ref: '#/definitions/serializer.Response'
+        "409":
+          description: Session with this UUID already exists
+          schema:
+            $ref: '#/definitions/serializer.Response'
       security:
       - BearerAuth: []
       summary: Create session
@@ -2069,6 +2081,9 @@ paths:
 
           # Create a session for a specific user
           session = client.sessions.create(user='alice@acontext.io')
+
+          # Create a session with a specific UUID
+          session = client.sessions.create(use_uuid='123e4567-e89b-12d3-a456-426614174000')
       - label: JavaScript
         lang: javascript
         source: |
@@ -2082,6 +2097,9 @@ paths:
 
           // Create a session for a specific user
           const userSession = await client.sessions.create({ user: 'alice@acontext.io' });
+
+          // Create a session with a specific UUID
+          const customSession = await client.sessions.create({ useUuid: '123e4567-e89b-12d3-a456-426614174000' });
   /session/{session_id}:
     delete:
       consumes:

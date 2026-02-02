@@ -75,6 +75,83 @@ async def test_async_ping_returns_pong(
 
 @patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
 @pytest.mark.asyncio
+async def test_async_sessions_create_with_use_uuid(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test that use_uuid is sent to API when provided."""
+    mock_request.return_value = {
+        "id": "123e4567-e89b-12d3-a456-426614174000",
+        "project_id": "project-id",
+        "configs": {},
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+    }
+
+    await async_client.sessions.create(use_uuid="123e4567-e89b-12d3-a456-426614174000")
+
+    mock_request.assert_called_once()
+    args, kwargs = mock_request.call_args
+    method, path = args
+    assert method == "POST"
+    assert path == "/session"
+    assert kwargs["json_data"]["use_uuid"] == "123e4567-e89b-12d3-a456-426614174000"
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_sessions_create_without_use_uuid(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test that use_uuid is not sent when not provided."""
+    mock_request.return_value = {
+        "id": "auto-generated-uuid",
+        "project_id": "project-id",
+        "configs": {},
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+    }
+
+    await async_client.sessions.create()
+
+    mock_request.assert_called_once()
+    args, kwargs = mock_request.call_args
+    method, path = args
+    assert method == "POST"
+    assert path == "/session"
+    # use_uuid should not be in payload when not provided
+    assert "use_uuid" not in (kwargs.get("json_data") or {})
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_sessions_create_with_use_uuid_and_user(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test that use_uuid can be combined with other parameters."""
+    mock_request.return_value = {
+        "id": "123e4567-e89b-12d3-a456-426614174000",
+        "project_id": "project-id",
+        "user_id": "user-uuid",
+        "configs": {"agent": "bot1"},
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+    }
+
+    await async_client.sessions.create(
+        user="alice@acontext.io",
+        use_uuid="123e4567-e89b-12d3-a456-426614174000",
+        configs={"agent": "bot1"},
+    )
+
+    mock_request.assert_called_once()
+    args, kwargs = mock_request.call_args
+    assert kwargs["json_data"]["user"] == "alice@acontext.io"
+    assert kwargs["json_data"]["use_uuid"] == "123e4567-e89b-12d3-a456-426614174000"
+    assert kwargs["json_data"]["configs"] == {"agent": "bot1"}
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
 async def test_async_store_message_with_files_uses_multipart_payload(
     mock_request, async_client: AcontextAsyncClient
 ) -> None:

@@ -41,6 +41,7 @@ type CreateSessionReq struct {
 	User                string                 `form:"user" json:"user" example:"alice@acontext.io"`
 	DisableTaskTracking *bool                  `form:"disable_task_tracking" json:"disable_task_tracking" example:"false"`
 	Configs             map[string]interface{} `form:"configs" json:"configs"`
+	UseUUID             *string                `form:"use_uuid" json:"use_uuid" example:"123e4567-e89b-12d3-a456-426614174000"`
 }
 
 type GetSessionsReq struct {
@@ -112,15 +113,17 @@ func (h *SessionHandler) GetSessions(c *gin.Context) {
 // CreateSession godoc
 //
 //	@Summary		Create session
-//	@Description	Create a new session. Optionally associate with a user identifier.
+//	@Description	Create a new session. Optionally associate with a user identifier. You can also specify a custom UUID using use_uuid.
 //	@Tags			session
 //	@Accept			json
 //	@Produce		json
 //	@Param			payload	body	handler.CreateSessionReq	true	"CreateSession payload"
 //	@Security		BearerAuth
 //	@Success		201	{object}	serializer.Response{data=model.Session}
+//	@Failure		400	{object}	serializer.Response	"Invalid UUID format"
+//	@Failure		409	{object}	serializer.Response	"Session with this UUID already exists"
 //	@Router			/session [post]
-//	@x-code-samples	[{"lang":"python","source":"from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Create a session\nsession = client.sessions.create()\nprint(f\"Created session: {session.id}\")\n\n# Create a session for a specific user\nsession = client.sessions.create(user='alice@acontext.io')\n","label":"Python"},{"lang":"javascript","source":"import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Create a session\nconst session = await client.sessions.create();\nconsole.log(`Created session: ${session.id}`);\n\n// Create a session for a specific user\nconst userSession = await client.sessions.create({ user: 'alice@acontext.io' });\n","label":"JavaScript"}]
+//	@x-code-samples	[{"lang":"python","source":"from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Create a session\nsession = client.sessions.create()\nprint(f\"Created session: {session.id}\")\n\n# Create a session for a specific user\nsession = client.sessions.create(user='alice@acontext.io')\n\n# Create a session with a specific UUID\nsession = client.sessions.create(use_uuid='123e4567-e89b-12d3-a456-426614174000')\n","label":"Python"},{"lang":"javascript","source":"import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Create a session\nconst session = await client.sessions.create();\nconsole.log(`Created session: ${session.id}`);\n\n// Create a session for a specific user\nconst userSession = await client.sessions.create({ user: 'alice@acontext.io' });\n\n// Create a session with a specific UUID\nconst customSession = await client.sessions.create({ useUuid: '123e4567-e89b-12d3-a456-426614174000' });\n","label":"JavaScript"}]
 func (h *SessionHandler) CreateSession(c *gin.Context) {
 	req := CreateSessionReq{}
 	if err := c.ShouldBind(&req); err != nil {
@@ -140,6 +143,16 @@ func (h *SessionHandler) CreateSession(c *gin.Context) {
 		Configs:             datatypes.JSONMap(req.Configs),
 	}
 
+	// If use_uuid is provided, validate and set the session ID
+	if req.UseUUID != nil && *req.UseUUID != "" {
+		parsedUUID, err := uuid.Parse(*req.UseUUID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, serializer.ParamErr("invalid UUID format for use_uuid", err))
+			return
+		}
+		session.ID = parsedUUID
+	}
+
 	// If user identifier is provided, get or create the user
 	if req.User != "" {
 		user, err := h.userSvc.GetOrCreate(c.Request.Context(), project.ID, req.User)
@@ -154,6 +167,11 @@ func (h *SessionHandler) CreateSession(c *gin.Context) {
 		session.DisableTaskTracking = *req.DisableTaskTracking
 	}
 	if err := h.svc.Create(c.Request.Context(), &session); err != nil {
+		// Check for duplicate key error (PostgreSQL unique violation)
+		if strings.Contains(err.Error(), "duplicate key") || strings.Contains(err.Error(), "23505") {
+			c.JSON(http.StatusConflict, serializer.Err(http.StatusConflict, "session with this UUID already exists", nil))
+			return
+		}
 		c.JSON(http.StatusInternalServerError, serializer.DBErr("", err))
 		return
 	}

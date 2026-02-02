@@ -256,6 +256,8 @@ func TestSessionHandler_GetSessions(t *testing.T) {
 
 func TestSessionHandler_CreateSession(t *testing.T) {
 	projectID := uuid.New()
+	customUUID := "123e4567-e89b-12d3-a456-426614174000"
+	customUUIDParsed := uuid.MustParse(customUUID)
 
 	tests := []struct {
 		name           string
@@ -279,6 +281,60 @@ func TestSessionHandler_CreateSession(t *testing.T) {
 			},
 			expectedStatus: http.StatusCreated,
 			expectedError:  false,
+		},
+		{
+			name: "successful session creation with custom UUID",
+			requestBody: CreateSessionReq{
+				Configs: map[string]interface{}{
+					"temperature": 0.7,
+				},
+				UseUUID: &customUUID,
+			},
+			setup: func(svc *MockSessionService) {
+				svc.On("Create", mock.Anything, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ProjectID == projectID && s.ID == customUUIDParsed
+				})).Return(nil)
+			},
+			expectedStatus: http.StatusCreated,
+			expectedError:  false,
+		},
+		{
+			name: "invalid UUID format for use_uuid",
+			requestBody: CreateSessionReq{
+				Configs: map[string]interface{}{},
+				UseUUID: func() *string { s := "not-a-valid-uuid"; return &s }(),
+			},
+			setup:          func(svc *MockSessionService) {},
+			expectedStatus: http.StatusBadRequest,
+			expectedError:  true,
+		},
+		{
+			name: "duplicate UUID conflict",
+			requestBody: CreateSessionReq{
+				Configs: map[string]interface{}{},
+				UseUUID: &customUUID,
+			},
+			setup: func(svc *MockSessionService) {
+				svc.On("Create", mock.Anything, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == customUUIDParsed
+				})).Return(errors.New("duplicate key value violates unique constraint"))
+			},
+			expectedStatus: http.StatusConflict,
+			expectedError:  true,
+		},
+		{
+			name: "duplicate UUID conflict with postgres error code",
+			requestBody: CreateSessionReq{
+				Configs: map[string]interface{}{},
+				UseUUID: &customUUID,
+			},
+			setup: func(svc *MockSessionService) {
+				svc.On("Create", mock.Anything, mock.MatchedBy(func(s *model.Session) bool {
+					return s.ID == customUUIDParsed
+				})).Return(errors.New("ERROR: 23505 unique_violation"))
+			},
+			expectedStatus: http.StatusConflict,
+			expectedError:  true,
 		},
 		{
 			name: "service layer error",
