@@ -11,3 +11,10 @@ export const FileContentSchema = z.object({
 
 export type FileContent = z.infer<typeof FileContentSchema>;
 
+export const FlagResponseSchema = z.object({
+  status: z.number(),
+  errmsg: z.string(),
+});
+
+export type FlagResponse = z.infer<typeof FlagResponseSchema>;
+

@@ -24,7 +24,6 @@ type RouterDeps struct {
 	DiskHandler        *handler.DiskHandler
 	ArtifactHandler    *handler.ArtifactHandler
 	TaskHandler        *handler.TaskHandler
-	ToolHandler        *handler.ToolHandler
 	AgentSkillsHandler *handler.AgentSkillsHandler
 	UserHandler        *handler.UserHandler
 	SandboxHandler     *handler.SandboxHandler
@@ -105,12 +104,6 @@ func NewRouter(d RouterDeps) *gin.Engine {
 				artifact.POST("/download_to_sandbox", d.ArtifactHandler.DownloadToSandbox)
 				artifact.POST("/upload_from_sandbox", d.ArtifactHandler.UploadFromSandbox)
 			}
-		}
-
-		tool := v1.Group("/tool")
-		{
-			tool.PUT("/name", d.ToolHandler.RenameToolName)
-			tool.GET("/name", d.ToolHandler.GetToolName)
 		}
 
 		agentSkills := v1.Group("/agent_skills")

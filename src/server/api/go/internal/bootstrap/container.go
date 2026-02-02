@@ -57,7 +57,6 @@ func BuildContainer() *do.Injector {
 				&model.Disk{},
 				&model.Artifact{},
 				&model.AssetReference{},
-				&model.ToolReference{},
 				&model.Metric{},
 				&model.AgentSkills{},
 				&model.SandboxLog{},
@@ -250,9 +249,6 @@ func BuildContainer() *do.Injector {
 	})
 	do.Provide(inj, func(i *do.Injector) (*handler.TaskHandler, error) {
 		return handler.NewTaskHandler(do.MustInvoke[service.TaskService](i)), nil
-	})
-	do.Provide(inj, func(i *do.Injector) (*handler.ToolHandler, error) {
-		return handler.NewToolHandler(do.MustInvoke[*httpclient.CoreClient](i)), nil
 	})
 	do.Provide(inj, func(i *do.Injector) (*handler.AgentSkillsHandler, error) {
 		return handler.NewAgentSkillsHandler(

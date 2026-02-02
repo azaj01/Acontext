@@ -8,7 +8,6 @@ from .base import ORM_BASE, CommonMixin
 if TYPE_CHECKING:
     from .session import Session
     from .task import Task
-    from .tool_reference import ToolReference
     from .metric import Metric
     from .sandbox_log import SandboxLog
 
@@ -46,15 +45,6 @@ class Project(CommonMixin):
         metadata={
             "db": relationship(
                 "Task", back_populates="project", cascade="all, delete-orphan"
-            )
-        },
-    )
-
-    tool_references: List["ToolReference"] = field(
-        default_factory=list,
-        metadata={
-            "db": relationship(
-                "ToolReference", back_populates="project", cascade="all, delete-orphan"
             )
         },
     )

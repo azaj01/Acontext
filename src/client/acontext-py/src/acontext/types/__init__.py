@@ -1,6 +1,6 @@
 """Type definitions for API responses."""
 
-from .common import FileContent
+from .common import FileContent, FlagResponse
 from .disk import (
     Artifact,
     Disk,
@@ -21,11 +21,6 @@ from .session import (
     Task,
     TaskData,
     TokenCounts,
-)
-from .tool import (
-    FlagResponse,
-    ToolReferenceData,
-    ToolRenameItem,
 )
 from .skill import (
     FileInfo,
@@ -50,10 +45,12 @@ from .user import (
 )
 
 __all__ = [
+    # Common types
+    "FileContent",
+    "FlagResponse",
     # Disk types
     "Artifact",
     "Disk",
-    "FileContent",
     "GetArtifactResp",
     "ListArtifactsResp",
     "ListDisksOutput",
@@ -70,10 +67,6 @@ __all__ = [
     "Task",
     "TaskData",
     "TokenCounts",
-    # Tool types
-    "FlagResponse",
-    "ToolReferenceData",
-    "ToolRenameItem",
     # Skill types
     "FileInfo",
     "Skill",

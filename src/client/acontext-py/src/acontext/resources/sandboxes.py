@@ -9,7 +9,7 @@ from ..types.sandbox import (
     SandboxCommandOutput,
     SandboxRuntimeInfo,
 )
-from ..types.tool import FlagResponse
+from ..types.common import FlagResponse
 
 
 class SandboxesAPI:

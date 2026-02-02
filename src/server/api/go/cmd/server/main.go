@@ -87,7 +87,6 @@ func main() {
 	diskHandler := do.MustInvoke[*handler.DiskHandler](inj)
 	artifactHandler := do.MustInvoke[*handler.ArtifactHandler](inj)
 	taskHandler := do.MustInvoke[*handler.TaskHandler](inj)
-	toolHandler := do.MustInvoke[*handler.ToolHandler](inj)
 	agentSkillsHandler := do.MustInvoke[*handler.AgentSkillsHandler](inj)
 	userHandler := do.MustInvoke[*handler.UserHandler](inj)
 	sandboxHandler := do.MustInvoke[*handler.SandboxHandler](inj)
@@ -100,7 +99,6 @@ func main() {
 		DiskHandler:        diskHandler,
 		ArtifactHandler:    artifactHandler,
 		TaskHandler:        taskHandler,
-		ToolHandler:        toolHandler,
 		AgentSkillsHandler: agentSkillsHandler,
 		UserHandler:        userHandler,
 		SandboxHandler:     sandboxHandler,

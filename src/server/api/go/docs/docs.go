@@ -2313,122 +2313,6 @@ const docTemplate = `{
                 ]
             }
         },
-        "/tool/name": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Get all tool names within a project",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tool"
-                ],
-                "summary": "Get tool names",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/serializer.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "type": "array",
-                                            "items": {
-                                                "$ref": "#/definitions/httpclient.ToolReferenceData"
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                },
-                "x-code-samples": [
-                    {
-                        "label": "Python",
-                        "lang": "python",
-                        "source": "from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Get all tool names\ntools = client.tools.list()\nfor tool in tools:\n    print(f\"{tool.name}: {tool.sop_count} SOPs\")\n"
-                    },
-                    {
-                        "label": "JavaScript",
-                        "lang": "javascript",
-                        "source": "import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Get all tool names\nconst tools = await client.tools.list();\nfor (const tool of tools) {\n  console.log(` + "`" + `${tool.name}: ${tool.sop_count} SOPs` + "`" + `);\n}\n"
-                    }
-                ]
-            },
-            "put": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Rename one or more tool names within a project",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "tool"
-                ],
-                "summary": "Rename tool names",
-                "parameters": [
-                    {
-                        "description": "Tool rename request",
-                        "name": "payload",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/handler.RenameToolNameReq"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "allOf": [
-                                {
-                                    "$ref": "#/definitions/serializer.Response"
-                                },
-                                {
-                                    "type": "object",
-                                    "properties": {
-                                        "data": {
-                                            "$ref": "#/definitions/httpclient.FlagResponse"
-                                        }
-                                    }
-                                }
-                            ]
-                        }
-                    }
-                },
-                "x-code-samples": [
-                    {
-                        "label": "Python",
-                        "lang": "python",
-                        "source": "from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Rename tool names\nresult = client.tools.rename([\n    {\"old_name\": \"old_tool_name\", \"new_name\": \"new_tool_name\"}\n])\nprint(result.status)\n"
-                    },
-                    {
-                        "label": "JavaScript",
-                        "lang": "javascript",
-                        "source": "import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Rename tool names\nconst result = await client.tools.rename([\n  { oldName: 'old_tool_name', newName: 'new_tool_name' }\n]);\nconsole.log(result.status);\n"
-                    }
-                ]
-            }
-        },
         "/user/ls": {
             "get": {
                 "security": [
@@ -2767,21 +2651,6 @@ const docTemplate = `{
                 }
             }
         },
-        "handler.RenameToolNameReq": {
-            "type": "object",
-            "required": [
-                "rename"
-            ],
-            "properties": {
-                "rename": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "$ref": "#/definitions/handler.ToolRenameItem"
-                    }
-                }
-            }
-        },
         "handler.StoreMessageReq": {
             "type": "object",
             "required": [
@@ -2806,21 +2675,6 @@ const docTemplate = `{
             "properties": {
                 "total_tokens": {
                     "type": "integer"
-                }
-            }
-        },
-        "handler.ToolRenameItem": {
-            "type": "object",
-            "required": [
-                "new_name",
-                "old_name"
-            ],
-            "properties": {
-                "new_name": {
-                    "type": "string"
-                },
-                "old_name": {
-                    "type": "string"
                 }
             }
         },
@@ -2924,17 +2778,6 @@ const docTemplate = `{
                 },
                 "sandbox_status": {
                     "type": "string"
-                }
-            }
-        },
-        "httpclient.ToolReferenceData": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string"
-                },
-                "sop_count": {
-                    "type": "integer"
                 }
             }
         },

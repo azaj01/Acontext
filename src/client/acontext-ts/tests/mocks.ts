@@ -6,7 +6,6 @@
 import { RequesterProtocol } from '../src/client-types';
 import { SessionsAPI } from '../src/resources/sessions';
 import { DisksAPI } from '../src/resources/disks';
-import { ToolsAPI } from '../src/resources/tools';
 import { SkillsAPI } from '../src/resources/skills';
 import { UsersAPI } from '../src/resources/users';
 
@@ -115,7 +114,6 @@ export class MockAcontextClient {
   public sessions: SessionsAPI;
   public disks: DisksAPI;
   public artifacts: DisksAPI['artifacts'];
-  public tools: ToolsAPI;
   public skills: SkillsAPI;
   public users: UsersAPI;
 
@@ -124,7 +122,6 @@ export class MockAcontextClient {
     this.sessions = new SessionsAPI(this.requester);
     this.disks = new DisksAPI(this.requester);
     this.artifacts = this.disks.artifacts;
-    this.tools = new ToolsAPI(this.requester);
     this.skills = new SkillsAPI(this.requester);
     this.users = new UsersAPI(this.requester);
   }

@@ -15,7 +15,6 @@ from .uploads import FileUpload as FileUpload
 from .resources.disks import DisksAPI as DisksAPI
 from .resources.sandboxes import SandboxesAPI as SandboxesAPI
 from .resources.sessions import SessionsAPI as SessionsAPI
-from .resources.tools import ToolsAPI as ToolsAPI
 from .resources.skills import SkillsAPI as SkillsAPI
 from .resources.users import UsersAPI as UsersAPI
 
@@ -107,7 +106,6 @@ class AcontextClient:
         self.sessions = SessionsAPI(self)
         self.disks = DisksAPI(self)
         self.artifacts = self.disks.artifacts
-        self.tools = ToolsAPI(self)
         self.skills = SkillsAPI(self)
         self.users = UsersAPI(self)
         self.sandboxes = SandboxesAPI(self)

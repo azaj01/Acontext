@@ -105,16 +105,6 @@ definitions:
           type: string
         type: array
     type: object
-  handler.RenameToolNameReq:
-    properties:
-      rename:
-        items:
-          $ref: '#/definitions/handler.ToolRenameItem'
-        minItems: 1
-        type: array
-    required:
-    - rename
-    type: object
   handler.StoreMessageReq:
     properties:
       blob: {}
@@ -133,16 +123,6 @@ definitions:
     properties:
       total_tokens:
         type: integer
-    type: object
-  handler.ToolRenameItem:
-    properties:
-      new_name:
-        type: string
-      old_name:
-        type: string
-    required:
-    - new_name
-    - old_name
     type: object
   handler.UpdateArtifactReq:
     properties:
@@ -213,13 +193,6 @@ definitions:
         type: string
       sandbox_status:
         type: string
-    type: object
-  httpclient.ToolReferenceData:
-    properties:
-      name:
-        type: string
-      sop_count:
-        type: integer
     type: object
   model.AgentSkills:
     properties:
@@ -2697,107 +2670,6 @@ paths:
           // Get token counts
           const result = await client.sessions.getTokenCounts('session-uuid');
           console.log(`Total tokens: ${result.total_tokens}`);
-  /tool/name:
-    get:
-      consumes:
-      - application/json
-      description: Get all tool names within a project
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/serializer.Response'
-            - properties:
-                data:
-                  items:
-                    $ref: '#/definitions/httpclient.ToolReferenceData'
-                  type: array
-              type: object
-      security:
-      - BearerAuth: []
-      summary: Get tool names
-      tags:
-      - tool
-      x-code-samples:
-      - label: Python
-        lang: python
-        source: |
-          from acontext import AcontextClient
-
-          client = AcontextClient(api_key='sk_project_token')
-
-          # Get all tool names
-          tools = client.tools.list()
-          for tool in tools:
-              print(f"{tool.name}: {tool.sop_count} SOPs")
-      - label: JavaScript
-        lang: javascript
-        source: |
-          import { AcontextClient } from '@acontext/acontext';
-
-          const client = new AcontextClient({ apiKey: 'sk_project_token' });
-
-          // Get all tool names
-          const tools = await client.tools.list();
-          for (const tool of tools) {
-            console.log(`${tool.name}: ${tool.sop_count} SOPs`);
-          }
-    put:
-      consumes:
-      - application/json
-      description: Rename one or more tool names within a project
-      parameters:
-      - description: Tool rename request
-        in: body
-        name: payload
-        required: true
-        schema:
-          $ref: '#/definitions/handler.RenameToolNameReq'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            allOf:
-            - $ref: '#/definitions/serializer.Response'
-            - properties:
-                data:
-                  $ref: '#/definitions/httpclient.FlagResponse'
-              type: object
-      security:
-      - BearerAuth: []
-      summary: Rename tool names
-      tags:
-      - tool
-      x-code-samples:
-      - label: Python
-        lang: python
-        source: |
-          from acontext import AcontextClient
-
-          client = AcontextClient(api_key='sk_project_token')
-
-          # Rename tool names
-          result = client.tools.rename([
-              {"old_name": "old_tool_name", "new_name": "new_tool_name"}
-          ])
-          print(result.status)
-      - label: JavaScript
-        lang: javascript
-        source: |
-          import { AcontextClient } from '@acontext/acontext';
-
-          const client = new AcontextClient({ apiKey: 'sk_project_token' });
-
-          // Rename tool names
-          const result = await client.tools.rename([
-            { oldName: 'old_tool_name', newName: 'new_tool_name' }
-          ]);
-          console.log(result.status);
   /user/{identifier}:
     delete:
       consumes:
