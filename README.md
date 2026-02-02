@@ -268,9 +268,9 @@ for tc in response.choices[0].message.tool_calls:
 ```python
 from acontext import FileUpload
 
-# Upload a skill ZIP (e.g., web-artifacts-builder.zip)
+# Upload a skill ZIP (e.g., xlsx.zip)
 with open("web-artifacts-builder.zip", "rb") as f:
-    skill = client.skills.create(file=FileUpload(filename="web-artifacts-builder.zip", content=f.read()))
+    skill = client.skills.create(file=FileUpload(filename="xlsx.zip", content=f.read()))
 
 # Mount into sandbox
 ctx = SANDBOX_TOOLS.format_context(
@@ -283,7 +283,7 @@ response = OpenAI().chat.completions.create(
     model="gpt-4.1",
     messages=[
         {"role": "system", "content": f"You have sandbox access.\n\n{ctx.get_context_prompt()}"},
-        {"role": "user", "content": "Create an Excel file with a simple budget spreadsheet"}
+        {"role": "user", "content": "Create an Excel file with a simple budget spreadsheet and export it"}
     ],
     tools=SANDBOX_TOOLS.to_openai_tool_schema()
 )
