@@ -34,6 +34,7 @@ type SessionService interface {
 	GetMessages(ctx context.Context, in GetMessagesInput) (*GetMessagesOutput, error)
 	GetAllMessages(ctx context.Context, sessionID uuid.UUID) ([]model.Message, error)
 	GetSessionObservingStatus(ctx context.Context, sessionID string) (*model.MessageObservingStatus, error)
+	PatchMessageMeta(ctx context.Context, projectID uuid.UUID, sessionID uuid.UUID, messageID uuid.UUID, patchMeta map[string]interface{}) (map[string]interface{}, error)
 }
 
 type sessionService struct {
@@ -632,4 +633,63 @@ func (s *sessionService) GetSessionObservingStatus(
 	}
 
 	return status, nil
+}
+
+// PatchMessageMeta updates message metadata using patch semantics.
+// Only updates keys present in patchMeta. Use nil value to delete a key.
+// Returns the updated user meta (only user-provided metadata, not system fields).
+func (s *sessionService) PatchMessageMeta(
+	ctx context.Context,
+	projectID uuid.UUID,
+	sessionID uuid.UUID,
+	messageID uuid.UUID,
+	patchMeta map[string]interface{},
+) (map[string]interface{}, error) {
+	// Verify session exists and belongs to project
+	session, err := s.sessionRepo.Get(ctx, &model.Session{ID: sessionID})
+	if err != nil {
+		return nil, fmt.Errorf("session not found")
+	}
+	if session.ProjectID != projectID {
+		return nil, fmt.Errorf("session not found")
+	}
+
+	// Get the message (also verifies it belongs to the session)
+	msg, err := s.sessionRepo.GetMessageByID(ctx, sessionID, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("message not found")
+	}
+
+	// Get existing meta
+	existingMeta := msg.Meta.Data()
+	if existingMeta == nil {
+		existingMeta = make(map[string]interface{})
+	}
+
+	// Extract existing user meta
+	var userMeta map[string]interface{}
+	if um, ok := existingMeta[model.UserMetaKey].(map[string]interface{}); ok {
+		userMeta = um
+	} else {
+		userMeta = make(map[string]interface{})
+	}
+
+	// Apply patch: merge new keys, delete keys with nil value
+	for k, v := range patchMeta {
+		if v == nil {
+			delete(userMeta, k) // null value = delete key
+		} else {
+			userMeta[k] = v // add or update key
+		}
+	}
+
+	// Update the __user_meta__ field
+	existingMeta[model.UserMetaKey] = userMeta
+
+	// Save to database
+	if err := s.sessionRepo.UpdateMessageMeta(ctx, messageID, datatypes.NewJSONType(existingMeta)); err != nil {
+		return nil, fmt.Errorf("failed to update message meta: %w", err)
+	}
+
+	return userMeta, nil
 }

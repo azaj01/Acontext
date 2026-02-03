@@ -97,6 +97,8 @@ export type PublicURL = z.infer<typeof PublicURLSchema>;
 export const GetMessagesOutputSchema = z.object({
   items: z.array(z.unknown()),
   ids: z.array(z.string()),
+  /** User-provided metadata for each message (same order as items/ids) */
+  metas: z.array(z.record(z.string(), z.unknown())).default([]),
   next_cursor: z.string().nullable().optional(),
   has_more: z.boolean(),
   /** Total token count of the returned messages */

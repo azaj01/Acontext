@@ -198,11 +198,26 @@ export class SessionsAPI {
     return parts.join('\n');
   }
 
+  /**
+   * Store a message to a session.
+   *
+   * @param sessionId - The UUID of the session.
+   * @param blob - The message blob in Acontext, OpenAI, Anthropic, or Gemini format.
+   * @param options - Options for storing the message.
+   * @param options.format - The format of the message blob ('acontext', 'openai', 'anthropic', or 'gemini').
+   * @param options.meta - Optional user-provided metadata for the message. This metadata is stored
+   *   separately from the message content and can be retrieved via getMessages().metas
+   *   or updated via patchMessageMeta(). Works with all formats.
+   * @param options.fileField - The field name for file upload. Only used when format is 'acontext'.
+   * @param options.file - Optional file upload. Only used when format is 'acontext'.
+   * @returns The created Message object. The msg.meta field contains only user-provided metadata.
+   */
   async storeMessage(
     sessionId: string,
     blob: MessageBlob,
     options?: {
       format?: 'acontext' | 'openai' | 'anthropic' | 'gemini';
+      meta?: Record<string, unknown> | null;
       fileField?: string | null;
       file?: FileUpload | null;
     }
@@ -219,6 +234,10 @@ export class SessionsAPI {
     const payload: Record<string, unknown> = {
       format,
     };
+
+    if (options?.meta !== undefined && options?.meta !== null) {
+      payload.meta = options.meta;
+    }
 
     if (format === 'acontext') {
       if (blob instanceof AcontextMessage) {
@@ -341,5 +360,42 @@ export class SessionsAPI {
   async messagesObservingStatus(sessionId: string): Promise<MessageObservingStatus> {
     const data = await this.requester.request('GET', `/session/${sessionId}/observing_status`);
     return MessageObservingStatusSchema.parse(data);
+  }
+
+  /**
+   * Update message metadata using patch semantics.
+   *
+   * Only updates keys present in the meta object. Existing keys not in the request
+   * are preserved. To delete a key, pass null as its value.
+   *
+   * @param sessionId - The UUID of the session.
+   * @param messageId - The UUID of the message.
+   * @param meta - Object of metadata keys to add, update, or delete. Pass null as a value to delete that key.
+   * @returns The complete user metadata after the patch operation.
+   *
+   * @example
+   * // Add/update keys
+   * const updated = await client.sessions.patchMessageMeta(
+   *   sessionId, messageId,
+   *   { status: 'processed', score: 0.95 }
+   * );
+   *
+   * @example
+   * // Delete a key
+   * const updated = await client.sessions.patchMessageMeta(
+   *   sessionId, messageId,
+   *   { old_key: null }  // Deletes "old_key"
+   * );
+   */
+  async patchMessageMeta(
+    sessionId: string,
+    messageId: string,
+    meta: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const payload = { meta };
+    const data = await this.requester.request('PATCH', `/session/${sessionId}/messages/${messageId}/meta`, {
+      jsonData: payload,
+    });
+    return (data as { meta: Record<string, unknown> }).meta ?? {};
   }
 }

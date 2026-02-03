@@ -23,6 +23,9 @@ import (
 	"gorm.io/datatypes"
 )
 
+// MaxMetaSize is the maximum allowed size for user-provided message metadata (64KB)
+const MaxMetaSize = 64 * 1024
+
 type SessionHandler struct {
 	svc        service.SessionService
 	userSvc    service.UserService
@@ -280,14 +283,15 @@ func (h *SessionHandler) GetConfigs(c *gin.Context) {
 }
 
 type StoreMessageReq struct {
-	Blob   interface{} `form:"blob" json:"blob" binding:"required"`
-	Format string      `form:"format" json:"format" binding:"omitempty,oneof=acontext openai anthropic gemini" example:"openai" enums:"acontext,openai,anthropic,gemini"`
+	Blob   interface{}            `form:"blob" json:"blob" binding:"required"`
+	Format string                 `form:"format" json:"format" binding:"omitempty,oneof=acontext openai anthropic gemini" example:"openai" enums:"acontext,openai,anthropic,gemini"`
+	Meta   map[string]interface{} `form:"meta" json:"meta"` // Optional user-provided metadata for the message
 }
 
 // StoreMessage godoc
 //
 //	@Summary		Store message to session
-//	@Description	Supports JSON and multipart/form-data. In multipart mode: the payload is a JSON string placed in a form field. The format parameter indicates the format of the input message (default: openai, same as GET). The blob field should be a complete message object: for openai, use OpenAI ChatCompletionMessageParam format (with role and content); for anthropic, use Anthropic MessageParam format (with role and content); for acontext (internal), use {role, parts} format.
+//	@Description	Supports JSON and multipart/form-data. In multipart mode: the payload is a JSON string placed in a form field. The format parameter indicates the format of the input message (default: openai, same as GET). The blob field should be a complete message object: for openai, use OpenAI ChatCompletionMessageParam format (with role and content); for anthropic, use Anthropic MessageParam format (with role and content); for acontext (internal), use {role, parts} format. The optional meta field allows attaching user-provided metadata to the message, which can be retrieved via get_messages().metas or updated via patch_message_meta().
 //	@Tags			session
 //	@Accept			json
 //	@Accept			multipart/form-data
@@ -303,7 +307,7 @@ type StoreMessageReq struct {
 //	@Security		BearerAuth
 //	@Success		201	{object}	serializer.Response{data=model.Message}
 //	@Router			/session/{session_id}/messages [post]
-//	@x-code-samples	[{"lang":"python","source":"from acontext import AcontextClient\nfrom acontext.messages import build_acontext_message\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Store a message in Acontext format\nmessage = build_acontext_message(role='user', parts=['Hello!'])\nclient.sessions.store_message(\n    session_id='session-uuid',\n    blob=message,\n    format='acontext'\n)\n\n# Store a message in OpenAI format\nopenai_message = {'role': 'user', 'content': 'Hello from OpenAI format!'}\nclient.sessions.store_message(\n    session_id='session-uuid',\n    blob=openai_message,\n    format='openai'\n)\n","label":"Python"},{"lang":"javascript","source":"import { AcontextClient, MessagePart } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Store a message in Acontext format\nawait client.sessions.storeMessage(\n  'session-uuid',\n  {\n    role: 'user',\n    parts: [MessagePart.textPart('Hello!')]\n  },\n  { format: 'acontext' }\n);\n\n// Store a message in OpenAI format\nawait client.sessions.storeMessage(\n  'session-uuid',\n  {\n    role: 'user',\n    content: 'Hello from OpenAI format!'\n  },\n  { format: 'openai' }\n);\n","label":"JavaScript"}]
+//	@x-code-samples	[{"lang":"python","source":"from acontext import AcontextClient\nfrom acontext.messages import build_acontext_message\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Store a message in OpenAI format with user metadata\nclient.sessions.store_message(\n    session_id='session-uuid',\n    blob={'role': 'user', 'content': 'Hello!'},\n    format='openai',\n    meta={'source': 'web', 'request_id': 'abc123'}\n)\n\n# Store a message in Acontext format\nmessage = build_acontext_message(role='user', parts=['Hello!'])\nclient.sessions.store_message(\n    session_id='session-uuid',\n    blob=message,\n    format='acontext'\n)\n","label":"Python"},{"lang":"javascript","source":"import { AcontextClient, MessagePart } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Store a message in OpenAI format with user metadata\nawait client.sessions.storeMessage(\n  'session-uuid',\n  { role: 'user', content: 'Hello!' },\n  { format: 'openai', meta: { source: 'web', request_id: 'abc123' } }\n);\n\n// Store a message in Acontext format\nawait client.sessions.storeMessage(\n  'session-uuid',\n  {\n    role: 'user',\n    parts: [MessagePart.textPart('Hello!')]\n  },\n  { format: 'acontext' }\n);\n","label":"JavaScript"}]
 func (h *SessionHandler) StoreMessage(c *gin.Context) {
 	req := StoreMessageReq{}
 
@@ -332,6 +336,15 @@ func (h *SessionHandler) StoreMessage(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, serializer.ParamErr("invalid format", err))
 		return
+	}
+
+	// Validate meta size (max 64KB)
+	if req.Meta != nil {
+		metaBytes, _ := json.Marshal(req.Meta)
+		if len(metaBytes) > MaxMetaSize {
+			c.JSON(http.StatusBadRequest, serializer.ParamErr("meta size exceeds 64KB limit", nil))
+			return
+		}
 	}
 
 	// Parse and normalize based on format
@@ -448,6 +461,14 @@ func (h *SessionHandler) StoreMessage(c *gin.Context) {
 		return
 	}
 
+	// Store user-provided meta in __user_meta__ field for complete isolation from system fields
+	if req.Meta != nil && len(req.Meta) > 0 {
+		if normalizedMeta == nil {
+			normalizedMeta = make(map[string]interface{})
+		}
+		normalizedMeta[model.UserMetaKey] = req.Meta
+	}
+
 	out, err := h.svc.StoreMessage(c.Request.Context(), service.StoreMessageInput{
 		ProjectID:   project.ID,
 		SessionID:   sessionID,
@@ -461,6 +482,10 @@ func (h *SessionHandler) StoreMessage(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, serializer.DBErr("", err))
 		return
 	}
+
+	// Extract user meta for response (hide internal __user_meta__ wrapper from users)
+	responseMeta := converter.ExtractUserMeta(out.Meta.Data())
+	out.Meta = datatypes.NewJSONType(responseMeta)
 
 	c.JSON(http.StatusCreated, serializer.Response{Data: out})
 }
@@ -675,4 +700,73 @@ func (h *SessionHandler) GetSessionObservingStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, serializer.Response{Data: status})
+}
+
+type PatchMessageMetaReq struct {
+	Meta map[string]interface{} `form:"meta" json:"meta" binding:"required"`
+}
+
+type PatchMessageMetaResp struct {
+	Meta map[string]interface{} `json:"meta"`
+}
+
+// PatchMessageMeta godoc
+//
+//	@Summary		Patch message metadata
+//	@Description	Update message metadata using patch semantics. Only updates keys present in the request. Pass null as value to delete a key.
+//	@Tags			session
+//	@Accept			json
+//	@Produce		json
+//	@Param			session_id	path	string						true	"Session ID"	format(uuid)
+//	@Param			message_id	path	string						true	"Message ID"	format(uuid)
+//	@Param			payload		body	handler.PatchMessageMetaReq	true	"PatchMessageMeta payload"
+//	@Security		BearerAuth
+//	@Success		200	{object}	serializer.Response{data=handler.PatchMessageMetaResp}
+//	@Failure		400	{object}	serializer.Response	"Invalid request"
+//	@Failure		404	{object}	serializer.Response	"Message not found"
+//	@Router			/session/{session_id}/messages/{message_id}/meta [patch]
+//	@x-code-samples	[{"lang":"python","source":"from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Patch message meta (adds/updates keys, use None to delete)\nupdated_meta = client.sessions.patch_message_meta(\n    session_id='session-uuid',\n    message_id='message-uuid',\n    meta={'status': 'processed', 'old_key': None}  # None deletes the key\n)\nprint(updated_meta)  # {'existing_key': 'value', 'status': 'processed'}\n","label":"Python"},{"lang":"javascript","source":"import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Patch message meta (adds/updates keys, use null to delete)\nconst updatedMeta = await client.sessions.patchMessageMeta(\n  'session-uuid',\n  'message-uuid',\n  { status: 'processed', old_key: null }  // null deletes the key\n);\nconsole.log(updatedMeta);  // { existing_key: 'value', status: 'processed' }\n","label":"JavaScript"}]
+func (h *SessionHandler) PatchMessageMeta(c *gin.Context) {
+	req := PatchMessageMetaReq{}
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr("", err))
+		return
+	}
+
+	// Validate meta size (max 64KB)
+	metaBytes, _ := json.Marshal(req.Meta)
+	if len(metaBytes) > MaxMetaSize {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr("meta size exceeds 64KB limit", nil))
+		return
+	}
+
+	project, ok := c.MustGet("project").(*model.Project)
+	if !ok {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr("", errors.New("project not found")))
+		return
+	}
+
+	sessionID, err := uuid.Parse(c.Param("session_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr("invalid session_id", err))
+		return
+	}
+
+	messageID, err := uuid.Parse(c.Param("message_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr("invalid message_id", err))
+		return
+	}
+
+	updatedMeta, err := h.svc.PatchMessageMeta(c.Request.Context(), project.ID, sessionID, messageID, req.Meta)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			c.JSON(http.StatusNotFound, serializer.Err(http.StatusNotFound, err.Error(), nil))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, serializer.DBErr("", err))
+		return
+	}
+
+	c.JSON(http.StatusOK, serializer.Response{Data: PatchMessageMetaResp{Meta: updatedMeta}})
 }

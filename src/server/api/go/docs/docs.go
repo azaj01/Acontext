@@ -2031,7 +2031,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Supports JSON and multipart/form-data. In multipart mode: the payload is a JSON string placed in a form field. The format parameter indicates the format of the input message (default: openai, same as GET). The blob field should be a complete message object: for openai, use OpenAI ChatCompletionMessageParam format (with role and content); for anthropic, use Anthropic MessageParam format (with role and content); for acontext (internal), use {role, parts} format.",
+                "description": "Supports JSON and multipart/form-data. In multipart mode: the payload is a JSON string placed in a form field. The format parameter indicates the format of the input message (default: openai, same as GET). The blob field should be a complete message object: for openai, use OpenAI ChatCompletionMessageParam format (with role and content); for anthropic, use Anthropic MessageParam format (with role and content); for acontext (internal), use {role, parts} format. The optional meta field allows attaching user-provided metadata to the message, which can be retrieved via get_messages().metas or updated via patch_message_meta().",
                 "consumes": [
                     "application/json",
                     "multipart/form-data"
@@ -2098,12 +2098,103 @@ const docTemplate = `{
                     {
                         "label": "Python",
                         "lang": "python",
-                        "source": "from acontext import AcontextClient\nfrom acontext.messages import build_acontext_message\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Store a message in Acontext format\nmessage = build_acontext_message(role='user', parts=['Hello!'])\nclient.sessions.store_message(\n    session_id='session-uuid',\n    blob=message,\n    format='acontext'\n)\n\n# Store a message in OpenAI format\nopenai_message = {'role': 'user', 'content': 'Hello from OpenAI format!'}\nclient.sessions.store_message(\n    session_id='session-uuid',\n    blob=openai_message,\n    format='openai'\n)\n"
+                        "source": "from acontext import AcontextClient\nfrom acontext.messages import build_acontext_message\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Store a message in OpenAI format with user metadata\nclient.sessions.store_message(\n    session_id='session-uuid',\n    blob={'role': 'user', 'content': 'Hello!'},\n    format='openai',\n    meta={'source': 'web', 'request_id': 'abc123'}\n)\n\n# Store a message in Acontext format\nmessage = build_acontext_message(role='user', parts=['Hello!'])\nclient.sessions.store_message(\n    session_id='session-uuid',\n    blob=message,\n    format='acontext'\n)\n"
                     },
                     {
                         "label": "JavaScript",
                         "lang": "javascript",
-                        "source": "import { AcontextClient, MessagePart } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Store a message in Acontext format\nawait client.sessions.storeMessage(\n  'session-uuid',\n  {\n    role: 'user',\n    parts: [MessagePart.textPart('Hello!')]\n  },\n  { format: 'acontext' }\n);\n\n// Store a message in OpenAI format\nawait client.sessions.storeMessage(\n  'session-uuid',\n  {\n    role: 'user',\n    content: 'Hello from OpenAI format!'\n  },\n  { format: 'openai' }\n);\n"
+                        "source": "import { AcontextClient, MessagePart } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Store a message in OpenAI format with user metadata\nawait client.sessions.storeMessage(\n  'session-uuid',\n  { role: 'user', content: 'Hello!' },\n  { format: 'openai', meta: { source: 'web', request_id: 'abc123' } }\n);\n\n// Store a message in Acontext format\nawait client.sessions.storeMessage(\n  'session-uuid',\n  {\n    role: 'user',\n    parts: [MessagePart.textPart('Hello!')]\n  },\n  { format: 'acontext' }\n);\n"
+                    }
+                ]
+            }
+        },
+        "/session/{session_id}/messages/{message_id}/meta": {
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update message metadata using patch semantics. Only updates keys present in the request. Pass null as value to delete a key.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "session"
+                ],
+                "summary": "Patch message metadata",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Session ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "format": "uuid",
+                        "description": "Message ID",
+                        "name": "message_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "PatchMessageMeta payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.PatchMessageMetaReq"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/serializer.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/handler.PatchMessageMetaResp"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request",
+                        "schema": {
+                            "$ref": "#/definitions/serializer.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Message not found",
+                        "schema": {
+                            "$ref": "#/definitions/serializer.Response"
+                        }
+                    }
+                },
+                "x-code-samples": [
+                    {
+                        "label": "Python",
+                        "lang": "python",
+                        "source": "from acontext import AcontextClient\n\nclient = AcontextClient(api_key='sk_project_token')\n\n# Patch message meta (adds/updates keys, use None to delete)\nupdated_meta = client.sessions.patch_message_meta(\n    session_id='session-uuid',\n    message_id='message-uuid',\n    meta={'status': 'processed', 'old_key': None}  # None deletes the key\n)\nprint(updated_meta)  # {'existing_key': 'value', 'status': 'processed'}\n"
+                    },
+                    {
+                        "label": "JavaScript",
+                        "lang": "javascript",
+                        "source": "import { AcontextClient } from '@acontext/acontext';\n\nconst client = new AcontextClient({ apiKey: 'sk_project_token' });\n\n// Patch message meta (adds/updates keys, use null to delete)\nconst updatedMeta = await client.sessions.patchMessageMeta(\n  'session-uuid',\n  'message-uuid',\n  { status: 'processed', old_key: null }  // null deletes the key\n);\nconsole.log(updatedMeta);  // { existing_key: 'value', status: 'processed' }\n"
                     }
                 ]
             }
@@ -2519,6 +2610,14 @@ const docTemplate = `{
                 "items": {
                     "description": "Messages in the requested format"
                 },
+                "metas": {
+                    "description": "User-provided metadata for each message (same order as items/ids)",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
                 "next_cursor": {
                     "description": "Cursor for pagination",
                     "type": "string"
@@ -2689,6 +2788,27 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.PatchMessageMetaReq": {
+            "type": "object",
+            "required": [
+                "meta"
+            ],
+            "properties": {
+                "meta": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
+        "handler.PatchMessageMetaResp": {
+            "type": "object",
+            "properties": {
+                "meta": {
+                    "type": "object",
+                    "additionalProperties": true
+                }
+            }
+        },
         "handler.StoreMessageReq": {
             "type": "object",
             "required": [
@@ -2705,6 +2825,11 @@ const docTemplate = `{
                         "gemini"
                     ],
                     "example": "openai"
+                },
+                "meta": {
+                    "description": "Optional user-provided metadata for the message",
+                    "type": "object",
+                    "additionalProperties": true
                 }
             }
         },

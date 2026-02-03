@@ -15,6 +15,12 @@ definitions:
         type: array
       items:
         description: Messages in the requested format
+      metas:
+        description: User-provided metadata for each message (same order as items/ids)
+        items:
+          additionalProperties: true
+          type: object
+        type: array
       next_cursor:
         description: Cursor for pagination
         type: string
@@ -132,6 +138,20 @@ definitions:
           type: string
         type: array
     type: object
+  handler.PatchMessageMetaReq:
+    properties:
+      meta:
+        additionalProperties: true
+        type: object
+    required:
+    - meta
+    type: object
+  handler.PatchMessageMetaResp:
+    properties:
+      meta:
+        additionalProperties: true
+        type: object
+    type: object
   handler.StoreMessageReq:
     properties:
       blob: {}
@@ -143,6 +163,10 @@ definitions:
         - gemini
         example: openai
         type: string
+      meta:
+        additionalProperties: true
+        description: Optional user-provided metadata for the message
+        type: object
     required:
     - blob
     type: object
@@ -2397,7 +2421,9 @@ paths:
         should be a complete message object: for openai, use OpenAI ChatCompletionMessageParam
         format (with role and content); for anthropic, use Anthropic MessageParam
         format (with role and content); for acontext (internal), use {role, parts}
-        format.'
+        format. The optional meta field allows attaching user-provided metadata to
+        the message, which can be retrieved via get_messages().metas or updated via
+        patch_message_meta().'
       parameters:
       - description: Session ID
         format: uuid
@@ -2445,6 +2471,14 @@ paths:
 
           client = AcontextClient(api_key='sk_project_token')
 
+          # Store a message in OpenAI format with user metadata
+          client.sessions.store_message(
+              session_id='session-uuid',
+              blob={'role': 'user', 'content': 'Hello!'},
+              format='openai',
+              meta={'source': 'web', 'request_id': 'abc123'}
+          )
+
           # Store a message in Acontext format
           message = build_acontext_message(role='user', parts=['Hello!'])
           client.sessions.store_message(
@@ -2452,20 +2486,19 @@ paths:
               blob=message,
               format='acontext'
           )
-
-          # Store a message in OpenAI format
-          openai_message = {'role': 'user', 'content': 'Hello from OpenAI format!'}
-          client.sessions.store_message(
-              session_id='session-uuid',
-              blob=openai_message,
-              format='openai'
-          )
       - label: JavaScript
         lang: javascript
         source: |
           import { AcontextClient, MessagePart } from '@acontext/acontext';
 
           const client = new AcontextClient({ apiKey: 'sk_project_token' });
+
+          // Store a message in OpenAI format with user metadata
+          await client.sessions.storeMessage(
+            'session-uuid',
+            { role: 'user', content: 'Hello!' },
+            { format: 'openai', meta: { source: 'web', request_id: 'abc123' } }
+          );
 
           // Store a message in Acontext format
           await client.sessions.storeMessage(
@@ -2476,16 +2509,85 @@ paths:
             },
             { format: 'acontext' }
           );
+  /session/{session_id}/messages/{message_id}/meta:
+    patch:
+      consumes:
+      - application/json
+      description: Update message metadata using patch semantics. Only updates keys
+        present in the request. Pass null as value to delete a key.
+      parameters:
+      - description: Session ID
+        format: uuid
+        in: path
+        name: session_id
+        required: true
+        type: string
+      - description: Message ID
+        format: uuid
+        in: path
+        name: message_id
+        required: true
+        type: string
+      - description: PatchMessageMeta payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/handler.PatchMessageMetaReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/serializer.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/handler.PatchMessageMetaResp'
+              type: object
+        "400":
+          description: Invalid request
+          schema:
+            $ref: '#/definitions/serializer.Response'
+        "404":
+          description: Message not found
+          schema:
+            $ref: '#/definitions/serializer.Response'
+      security:
+      - BearerAuth: []
+      summary: Patch message metadata
+      tags:
+      - session
+      x-code-samples:
+      - label: Python
+        lang: python
+        source: |
+          from acontext import AcontextClient
 
-          // Store a message in OpenAI format
-          await client.sessions.storeMessage(
+          client = AcontextClient(api_key='sk_project_token')
+
+          # Patch message meta (adds/updates keys, use None to delete)
+          updated_meta = client.sessions.patch_message_meta(
+              session_id='session-uuid',
+              message_id='message-uuid',
+              meta={'status': 'processed', 'old_key': None}  # None deletes the key
+          )
+          print(updated_meta)  # {'existing_key': 'value', 'status': 'processed'}
+      - label: JavaScript
+        lang: javascript
+        source: |
+          import { AcontextClient } from '@acontext/acontext';
+
+          const client = new AcontextClient({ apiKey: 'sk_project_token' });
+
+          // Patch message meta (adds/updates keys, use null to delete)
+          const updatedMeta = await client.sessions.patchMessageMeta(
             'session-uuid',
-            {
-              role: 'user',
-              content: 'Hello from OpenAI format!'
-            },
-            { format: 'openai' }
+            'message-uuid',
+            { status: 'processed', old_key: null }  // null deletes the key
           );
+          console.log(updatedMeta);  // { existing_key: 'value', status: 'processed' }
   /session/{session_id}/observing_status:
     get:
       consumes:

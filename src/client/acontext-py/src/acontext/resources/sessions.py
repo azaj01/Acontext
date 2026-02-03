@@ -224,6 +224,7 @@ class SessionsAPI:
         *,
         blob: MessageBlob,
         format: Literal["acontext", "openai", "anthropic", "gemini"] = "openai",
+        meta: dict[str, Any] | None = None,
         file_field: str | None = None,
         file: (
             FileUpload
@@ -238,12 +239,15 @@ class SessionsAPI:
             session_id: The UUID of the session.
             blob: The message blob in Acontext, OpenAI, Anthropic, or Gemini format.
             format: The format of the message blob. Defaults to "openai".
+            meta: Optional user-provided metadata for the message. This metadata is stored
+                separately from the message content and can be retrieved via get_messages().metas
+                or updated via patch_message_meta(). Works with all formats.
             file_field: The field name for file upload. Only used when format is "acontext".
                 Required if file is provided. Defaults to None.
             file: Optional file upload. Only used when format is "acontext". Defaults to None.
 
         Returns:
-            The created Message object.
+            The created Message object. The msg.meta field contains only user-provided metadata.
 
         Raises:
             ValueError: If format is invalid, file/file_field provided for non-acontext format,
@@ -265,6 +269,9 @@ class SessionsAPI:
         payload: dict[str, Any] = {
             "format": format,
         }
+        if meta is not None:
+            payload["meta"] = meta
+
         if format == "acontext":
             if isinstance(blob, Mapping):
                 payload["blob"] = blob
@@ -406,3 +413,44 @@ class SessionsAPI:
         """
         data = self._requester.request("GET", f"/session/{session_id}/observing_status")
         return MessageObservingStatus.model_validate(data)
+
+    def patch_message_meta(
+        self,
+        session_id: str,
+        message_id: str,
+        *,
+        meta: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Update message metadata using patch semantics.
+
+        Only updates keys present in the meta dict. Existing keys not in the request
+        are preserved. To delete a key, pass None as its value.
+
+        Args:
+            session_id: The UUID of the session.
+            message_id: The UUID of the message.
+            meta: Dictionary of metadata keys to add, update, or delete.
+                Pass None as a value to delete that key.
+
+        Returns:
+            The complete user metadata after the patch operation.
+
+        Example:
+            >>> # Add/update keys
+            >>> updated = client.sessions.patch_message_meta(
+            ...     session_id, message_id,
+            ...     meta={"status": "processed", "score": 0.95}
+            ... )
+            >>> # Delete a key
+            >>> updated = client.sessions.patch_message_meta(
+            ...     session_id, message_id,
+            ...     meta={"old_key": None}  # Deletes "old_key"
+            ... )
+        """
+        payload = {"meta": meta}
+        data = self._requester.request(
+            "PATCH",
+            f"/session/{session_id}/messages/{message_id}/meta",
+            json_data=payload,
+        )
+        return data.get("meta", {})  # type: ignore

@@ -62,6 +62,10 @@ export class MockRequester implements RequesterProtocol {
     return this.on('DELETE', path, handler);
   }
 
+  onPatch(path: string | RegExp, handler: MockHandler): this {
+    return this.on('PATCH', path, handler);
+  }
+
   /**
    * Clear all registered routes.
    */
@@ -243,6 +247,7 @@ export function mockMessage(overrides?: Partial<{
 export function mockGetMessagesOutput(overrides?: Partial<{
   items: Array<unknown>;
   ids: string[];
+  metas: Array<Record<string, unknown>>;
   next_cursor: string | null;
   has_more: boolean;
   this_time_tokens: number;
@@ -252,6 +257,7 @@ export function mockGetMessagesOutput(overrides?: Partial<{
   return {
     items: overrides?.items ?? [],
     ids: overrides?.ids ?? [],
+    metas: overrides?.metas ?? [],
     next_cursor: overrides?.next_cursor ?? null,
     has_more: overrides?.has_more ?? false,
     this_time_tokens: overrides?.this_time_tokens ?? 0,

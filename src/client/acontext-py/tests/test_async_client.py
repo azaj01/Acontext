@@ -1072,3 +1072,209 @@ async def test_async_sandboxes_kill_with_error(
     assert path == "/sandbox/nonexistent-sandbox"
     assert result.status == 1
     assert result.errmsg == "sandbox not found"
+
+
+# ===== Message Meta Tests =====
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_store_message_with_meta_parameter(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test that meta parameter is sent in request body."""
+    mock_request.return_value = {
+        "id": "msg-id",
+        "session_id": "session-id",
+        "role": "user",
+        "meta": {"source": "web", "request_id": "abc123"},
+        "parts": [],
+        "session_task_process_status": "pending",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+    }
+
+    msg = await async_client.sessions.store_message(
+        "session-id",
+        blob={"role": "user", "content": "Hello"},
+        format="openai",
+        meta={"source": "web", "request_id": "abc123"},
+    )
+
+    mock_request.assert_called_once()
+    args, kwargs = mock_request.call_args
+    method, path = args
+    assert method == "POST"
+    assert path == "/session/session-id/messages"
+    assert "json_data" in kwargs
+    assert kwargs["json_data"]["meta"] == {"source": "web", "request_id": "abc123"}
+    assert msg.meta == {"source": "web", "request_id": "abc123"}
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_store_message_without_meta_parameter(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test that meta is not sent when not provided."""
+    mock_request.return_value = {
+        "id": "msg-id",
+        "session_id": "session-id",
+        "role": "user",
+        "meta": {},
+        "parts": [],
+        "session_task_process_status": "pending",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+    }
+
+    msg = await async_client.sessions.store_message(
+        "session-id",
+        blob={"role": "user", "content": "Hello"},
+        format="openai",
+    )
+
+    mock_request.assert_called_once()
+    args, kwargs = mock_request.call_args
+    assert "meta" not in kwargs["json_data"]
+    assert msg.meta == {}
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_get_messages_returns_metas(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test that get_messages returns metas array."""
+    mock_request.return_value = {
+        "items": [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+        ],
+        "ids": ["msg-1", "msg-2"],
+        "metas": [
+            {"source": "web"},
+            {"model": "gpt-4"},
+        ],
+        "has_more": False,
+        "this_time_tokens": 50,
+    }
+
+    result = await async_client.sessions.get_messages("session-id", format="openai")
+
+    mock_request.assert_called_once()
+    assert hasattr(result, "metas")
+    assert len(result.metas) == 2
+    assert result.metas[0] == {"source": "web"}
+    assert result.metas[1] == {"model": "gpt-4"}
+    # Verify order matches items/ids
+    assert len(result.metas) == len(result.items) == len(result.ids)
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_get_messages_empty_metas(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test that get_messages handles empty metas (backward compatibility)."""
+    mock_request.return_value = {
+        "items": [{"role": "user", "content": "Hello"}],
+        "ids": ["msg-1"],
+        "metas": [{}],  # Empty meta for message without user meta
+        "has_more": False,
+        "this_time_tokens": 10,
+    }
+
+    result = await async_client.sessions.get_messages("session-id", format="openai")
+
+    assert len(result.metas) == 1
+    assert result.metas[0] == {}
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_get_messages_missing_metas_field(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test backward compatibility when metas field is missing."""
+    mock_request.return_value = {
+        "items": [{"role": "user", "content": "Hello"}],
+        "ids": ["msg-1"],
+        # No metas field - backward compatibility with old API
+        "has_more": False,
+        "this_time_tokens": 10,
+    }
+
+    result = await async_client.sessions.get_messages("session-id", format="openai")
+
+    # Should default to empty list
+    assert hasattr(result, "metas")
+    assert result.metas == []
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_patch_message_meta_adds_new_keys(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test patch_message_meta adds new keys."""
+    mock_request.return_value = {
+        "meta": {"existing": "value", "new_key": "new_value"},
+    }
+
+    result = await async_client.sessions.patch_message_meta(
+        "session-id",
+        "message-id",
+        meta={"new_key": "new_value"},
+    )
+
+    mock_request.assert_called_once()
+    args, kwargs = mock_request.call_args
+    method, path = args
+    assert method == "PATCH"
+    assert path == "/session/session-id/messages/message-id/meta"
+    assert kwargs["json_data"] == {"meta": {"new_key": "new_value"}}
+    assert result == {"existing": "value", "new_key": "new_value"}
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_patch_message_meta_updates_existing_keys(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test patch_message_meta updates existing keys."""
+    mock_request.return_value = {
+        "meta": {"key": "updated_value", "other": "preserved"},
+    }
+
+    result = await async_client.sessions.patch_message_meta(
+        "session-id",
+        "message-id",
+        meta={"key": "updated_value"},
+    )
+
+    mock_request.assert_called_once()
+    assert result == {"key": "updated_value", "other": "preserved"}
+
+
+@patch("acontext.async_client.AcontextAsyncClient.request", new_callable=AsyncMock)
+@pytest.mark.asyncio
+async def test_async_patch_message_meta_deletes_keys_with_none(
+    mock_request, async_client: AcontextAsyncClient
+) -> None:
+    """Test patch_message_meta deletes keys when value is None."""
+    mock_request.return_value = {
+        "meta": {"remaining": "value"},  # "deleted_key" was removed
+    }
+
+    result = await async_client.sessions.patch_message_meta(
+        "session-id",
+        "message-id",
+        meta={"deleted_key": None},
+    )
+
+    mock_request.assert_called_once()
+    args, kwargs = mock_request.call_args
+    assert kwargs["json_data"] == {"meta": {"deleted_key": None}}
+    assert "deleted_key" not in result
+    assert result == {"remaining": "value"}

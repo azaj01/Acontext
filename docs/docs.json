@@ -33,8 +33,9 @@
                   "store/messages/multi-modal",
                   "store/messages/filter-by-configs",
                   {
-                    "group": "Message Metadata",
+                    "group": "Meta",
                     "pages": [
+                      "store/messages/special/message-meta",
                       "store/messages/special/anthropic"
                     ]
                   }

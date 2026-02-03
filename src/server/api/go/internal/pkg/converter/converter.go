@@ -56,11 +56,25 @@ func ValidateFormat(format string) (model.MessageFormat, error) {
 	}
 }
 
+// ExtractUserMeta extracts user-provided metadata from the message meta.
+// User meta is stored in the __user_meta__ field to isolate it from system fields.
+// Returns an empty map if no user meta exists.
+func ExtractUserMeta(meta map[string]interface{}) map[string]interface{} {
+	if meta == nil {
+		return map[string]interface{}{}
+	}
+	if userMeta, ok := meta[model.UserMetaKey].(map[string]interface{}); ok {
+		return userMeta
+	}
+	return map[string]interface{}{}
+}
+
 // GetMessagesOutput represents the response for GetMessages endpoint
 // The Items field contains messages in the requested format (openai, anthropic, gemini, or acontext)
 type GetMessagesOutput struct {
 	Items           interface{}                  `json:"items"`                        // Messages in the requested format
 	IDs             []string                     `json:"ids"`                          // Message IDs corresponding to items
+	Metas           []map[string]interface{}     `json:"metas"`                        // User-provided metadata for each message (same order as items/ids)
 	NextCursor      string                       `json:"next_cursor,omitempty"`        // Cursor for pagination
 	HasMore         bool                         `json:"has_more"`                     // Whether there are more messages
 	ThisTimeTokens  int                          `json:"this_time_tokens"`             // Token count for returned messages
@@ -87,15 +101,19 @@ func GetConvertedMessagesOutput(
 		return nil, err
 	}
 
-	// Extracting message IDs
+	// Extracting message IDs and user metas
 	messageIDs := make([]string, len(messages))
+	metas := make([]map[string]interface{}, len(messages))
 	for i := range len(messages) {
 		messageIDs[i] = messages[i].ID.String()
+		// Extract user meta from __user_meta__ field
+		metas[i] = ExtractUserMeta(messages[i].Meta.Data())
 	}
 
 	result := &GetMessagesOutput{
 		Items:          convertedData,
 		IDs:            messageIDs,
+		Metas:          metas,
 		HasMore:        hasMore,
 		ThisTimeTokens: thisTimeTokens,
 	}

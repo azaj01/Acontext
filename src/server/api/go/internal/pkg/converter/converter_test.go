@@ -365,3 +365,242 @@ func TestGetConvertedMessagesOutput_WithPublicURLs(t *testing.T) {
 	assert.NotNil(t, result.PublicURLs, "public_urls should exist for Acontext format")
 	assert.Equal(t, 42, result.ThisTimeTokens)
 }
+
+// ============================================
+// ExtractUserMeta Tests
+// ============================================
+
+func TestExtractUserMeta_WithUserMeta(t *testing.T) {
+	meta := map[string]interface{}{
+		"source_format": "openai",
+		model.UserMetaKey: map[string]interface{}{
+			"key":    "value",
+			"source": "web",
+		},
+	}
+
+	result := ExtractUserMeta(meta)
+
+	assert.Equal(t, map[string]interface{}{
+		"key":    "value",
+		"source": "web",
+	}, result)
+}
+
+func TestExtractUserMeta_WithoutUserMeta(t *testing.T) {
+	meta := map[string]interface{}{
+		"source_format": "openai",
+	}
+
+	result := ExtractUserMeta(meta)
+
+	// Should return empty map, not nil
+	assert.NotNil(t, result)
+	assert.Equal(t, map[string]interface{}{}, result)
+}
+
+func TestExtractUserMeta_NilMeta(t *testing.T) {
+	result := ExtractUserMeta(nil)
+
+	// Should return empty map, not nil
+	assert.NotNil(t, result)
+	assert.Equal(t, map[string]interface{}{}, result)
+}
+
+func TestExtractUserMeta_EmptyMeta(t *testing.T) {
+	meta := map[string]interface{}{}
+
+	result := ExtractUserMeta(meta)
+
+	assert.NotNil(t, result)
+	assert.Equal(t, map[string]interface{}{}, result)
+}
+
+func TestExtractUserMeta_WrongTypeUserMeta(t *testing.T) {
+	// If __user_meta__ is not a map, should return empty
+	meta := map[string]interface{}{
+		model.UserMetaKey: "not a map",
+	}
+
+	result := ExtractUserMeta(meta)
+
+	assert.NotNil(t, result)
+	assert.Equal(t, map[string]interface{}{}, result)
+}
+
+// ============================================
+// Metas in GetConvertedMessagesOutput Tests
+// ============================================
+
+func TestGetConvertedMessagesOutput_ExtractsMetasCorrectly(t *testing.T) {
+	// Create messages with user meta
+	msg1 := createTestMessage("user", []model.Part{
+		{Type: "text", Text: "Hello"},
+	}, map[string]any{
+		"source_format": "openai",
+		model.UserMetaKey: map[string]interface{}{
+			"source":     "web",
+			"request_id": "abc123",
+		},
+	})
+
+	msg2 := createTestMessage("assistant", []model.Part{
+		{Type: "text", Text: "Hi there"},
+	}, map[string]any{
+		"source_format": "openai",
+		model.UserMetaKey: map[string]interface{}{
+			"model": "gpt-4",
+		},
+	})
+
+	messages := []model.Message{msg1, msg2}
+
+	result, err := GetConvertedMessagesOutput(
+		messages,
+		model.FormatOpenAI,
+		nil,
+		"",
+		false,
+		50,
+		"",
+	)
+
+	require.NoError(t, err)
+
+	// Verify metas array exists and has correct length
+	assert.NotNil(t, result.Metas)
+	assert.Equal(t, 2, len(result.Metas))
+
+	// Verify metas contain only user meta (not system fields)
+	assert.Equal(t, map[string]interface{}{
+		"source":     "web",
+		"request_id": "abc123",
+	}, result.Metas[0])
+	assert.Equal(t, map[string]interface{}{
+		"model": "gpt-4",
+	}, result.Metas[1])
+}
+
+func TestGetConvertedMessagesOutput_MetasOrderMatchesIDs(t *testing.T) {
+	// Create 3 messages with different metas
+	messages := make([]model.Message, 3)
+	for i := range 3 {
+		messages[i] = createTestMessage("user", []model.Part{
+			{Type: "text", Text: "Message"},
+		}, map[string]any{
+			model.UserMetaKey: map[string]interface{}{
+				"index": i,
+			},
+		})
+	}
+
+	result, err := GetConvertedMessagesOutput(
+		messages,
+		model.FormatOpenAI,
+		nil,
+		"",
+		false,
+		30,
+		"",
+	)
+
+	require.NoError(t, err)
+
+	// Verify order matches
+	assert.Equal(t, 3, len(result.Metas))
+	assert.Equal(t, 3, len(result.IDs))
+	for i := range 3 {
+		assert.Equal(t, messages[i].ID.String(), result.IDs[i])
+		assert.Equal(t, i, result.Metas[i]["index"])
+	}
+}
+
+func TestGetConvertedMessagesOutput_EmptyUserMeta(t *testing.T) {
+	// Message without __user_meta__ field
+	msg := createTestMessage("user", []model.Part{
+		{Type: "text", Text: "Hello"},
+	}, map[string]any{
+		"source_format": "openai",
+		// No __user_meta__ field
+	})
+
+	messages := []model.Message{msg}
+
+	result, err := GetConvertedMessagesOutput(
+		messages,
+		model.FormatOpenAI,
+		nil,
+		"",
+		false,
+		10,
+		"",
+	)
+
+	require.NoError(t, err)
+
+	// Should return empty map, not nil
+	assert.NotNil(t, result.Metas)
+	assert.Equal(t, 1, len(result.Metas))
+	assert.Equal(t, map[string]interface{}{}, result.Metas[0])
+}
+
+func TestGetConvertedMessagesOutput_MixedMetas(t *testing.T) {
+	// Mix of messages with and without user meta
+	msg1 := createTestMessage("user", []model.Part{
+		{Type: "text", Text: "Hello"},
+	}, map[string]any{
+		model.UserMetaKey: map[string]interface{}{
+			"has_meta": true,
+		},
+	})
+
+	msg2 := createTestMessage("assistant", []model.Part{
+		{Type: "text", Text: "Hi"},
+	}, nil) // No meta at all
+
+	msg3 := createTestMessage("user", []model.Part{
+		{Type: "text", Text: "Bye"},
+	}, map[string]any{
+		"source_format": "openai",
+		// No __user_meta__
+	})
+
+	messages := []model.Message{msg1, msg2, msg3}
+
+	result, err := GetConvertedMessagesOutput(
+		messages,
+		model.FormatOpenAI,
+		nil,
+		"",
+		false,
+		20,
+		"",
+	)
+
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, len(result.Metas))
+	assert.Equal(t, map[string]interface{}{"has_meta": true}, result.Metas[0])
+	assert.Equal(t, map[string]interface{}{}, result.Metas[1])
+	assert.Equal(t, map[string]interface{}{}, result.Metas[2])
+}
+
+func TestGetConvertedMessagesOutput_EmptyMessages_HasEmptyMetas(t *testing.T) {
+	messages := []model.Message{}
+
+	result, err := GetConvertedMessagesOutput(
+		messages,
+		model.FormatOpenAI,
+		nil,
+		"",
+		false,
+		0,
+		"",
+	)
+
+	require.NoError(t, err)
+
+	// Verify metas is empty slice, not nil
+	assert.NotNil(t, result.Metas)
+	assert.Equal(t, 0, len(result.Metas))
+}

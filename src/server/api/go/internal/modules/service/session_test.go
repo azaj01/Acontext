@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
+	"gorm.io/datatypes"
 )
 
 // MockSessionRepo is a mock implementation of SessionRepo
@@ -88,6 +89,19 @@ func (m *MockSessionRepo) GetObservingStatus(ctx context.Context, sessionID stri
 func (m *MockSessionRepo) PopGeminiCallIDAndName(ctx context.Context, sessionID uuid.UUID) (string, string, error) {
 	args := m.Called(ctx, sessionID)
 	return args.String(0), args.String(1), args.Error(2)
+}
+
+func (m *MockSessionRepo) GetMessageByID(ctx context.Context, sessionID uuid.UUID, messageID uuid.UUID) (*model.Message, error) {
+	args := m.Called(ctx, sessionID, messageID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*model.Message), args.Error(1)
+}
+
+func (m *MockSessionRepo) UpdateMessageMeta(ctx context.Context, messageID uuid.UUID, meta datatypes.JSONType[map[string]interface{}]) error {
+	args := m.Called(ctx, messageID, meta)
+	return args.Error(0)
 }
 
 // MockAssetReferenceRepo is a mock implementation of AssetReferenceRepo

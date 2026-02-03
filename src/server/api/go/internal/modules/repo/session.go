@@ -27,6 +27,8 @@ type SessionRepo interface {
 	ListAllMessagesBySession(ctx context.Context, sessionID uuid.UUID) ([]model.Message, error)
 	GetObservingStatus(ctx context.Context, sessionID string) (*model.MessageObservingStatus, error)
 	PopGeminiCallIDAndName(ctx context.Context, sessionID uuid.UUID) (string, string, error)
+	GetMessageByID(ctx context.Context, sessionID uuid.UUID, messageID uuid.UUID) (*model.Message, error)
+	UpdateMessageMeta(ctx context.Context, messageID uuid.UUID, meta datatypes.JSONType[map[string]interface{}]) error
 }
 
 type sessionRepo struct {
@@ -394,4 +396,25 @@ func (r *sessionRepo) PopGeminiCallIDAndName(ctx context.Context, sessionID uuid
 	}
 
 	return poppedID, poppedName, nil
+}
+
+// GetMessageByID retrieves a message by ID, verifying it belongs to the specified session.
+// Returns gorm.ErrRecordNotFound if the message doesn't exist or doesn't belong to the session.
+func (r *sessionRepo) GetMessageByID(ctx context.Context, sessionID uuid.UUID, messageID uuid.UUID) (*model.Message, error) {
+	var msg model.Message
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND session_id = ?", messageID, sessionID).
+		First(&msg).Error
+	if err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}
+
+// UpdateMessageMeta updates the meta field of a message.
+func (r *sessionRepo) UpdateMessageMeta(ctx context.Context, messageID uuid.UUID, meta datatypes.JSONType[map[string]interface{}]) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Message{}).
+		Where("id = ?", messageID).
+		Update("meta", meta).Error
 }

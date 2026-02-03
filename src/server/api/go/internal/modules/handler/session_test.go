@@ -91,6 +91,14 @@ func (m *MockSessionService) GetSessionObservingStatus(ctx context.Context, sess
 	return args.Get(0).(*model.MessageObservingStatus), args.Error(1)
 }
 
+func (m *MockSessionService) PatchMessageMeta(ctx context.Context, projectID uuid.UUID, sessionID uuid.UUID, messageID uuid.UUID, patchMeta map[string]interface{}) (map[string]interface{}, error) {
+	args := m.Called(ctx, projectID, sessionID, messageID, patchMeta)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]interface{}), args.Error(1)
+}
+
 func setupSessionRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	return gin.New()

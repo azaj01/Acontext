@@ -17,12 +17,16 @@ const (
 	FormatGemini    MessageFormat = "gemini"
 )
 
-// Reserved metadata keys that are not allowed in user metadata
+// Reserved metadata keys
 const (
 	// GeminiCallInfoKey is used to store generated Gemini function call information
 	// This key is reserved for storing an array of {id, name} objects that need to be matched with responses
 	// Format: [{"id": "call_xxx", "name": "function_name"}, ...]
 	GeminiCallInfoKey = "__gemini_call_info__"
+
+	// UserMetaKey is the key used to store user-provided metadata within the message meta JSONB.
+	// User meta is stored in this wrapper field to isolate it from system fields like source_format.
+	UserMetaKey = "__user_meta__"
 )
 
 type Message struct {

@@ -385,6 +385,143 @@ describe('AcontextClient Unit Tests', () => {
       expect(message).toBeDefined();
       expect(message.role).toBe('assistant');
     });
+
+    test('should store message with meta option', async () => {
+      const sessionId = 'test-session-id';
+      const storedMessage = mockMessage({
+        session_id: sessionId,
+        role: 'user',
+        meta: { source: 'web', request_id: 'abc123' },
+      });
+      client.mock().onPost(`/session/${sessionId}/messages`, (options) => {
+        const data = options?.jsonData as Record<string, unknown>;
+        expect(data?.meta).toEqual({ source: 'web', request_id: 'abc123' });
+        return storedMessage;
+      });
+
+      const message = await client.sessions.storeMessage(
+        sessionId,
+        { role: 'user', content: 'Hello' },
+        { format: 'openai', meta: { source: 'web', request_id: 'abc123' } }
+      );
+      expect(message).toBeDefined();
+      expect(message.meta).toEqual({ source: 'web', request_id: 'abc123' });
+    });
+
+    test('should store message without meta option', async () => {
+      const sessionId = 'test-session-id';
+      const storedMessage = mockMessage({
+        session_id: sessionId,
+        role: 'user',
+        meta: {},
+      });
+      client.mock().onPost(`/session/${sessionId}/messages`, (options) => {
+        const data = options?.jsonData as Record<string, unknown>;
+        expect(data?.meta).toBeUndefined();
+        return storedMessage;
+      });
+
+      const message = await client.sessions.storeMessage(
+        sessionId,
+        { role: 'user', content: 'Hello' },
+        { format: 'openai' }
+      );
+      expect(message).toBeDefined();
+      expect(message.meta).toEqual({});
+    });
+
+    test('should get messages with metas', async () => {
+      const sessionId = 'test-session-id';
+      client.mock().onGet(`/session/${sessionId}/messages`, () =>
+        mockGetMessagesOutput({
+          items: [{ role: 'user', content: 'Hello' }],
+          ids: ['msg-1'],
+          metas: [{ source: 'web', request_id: 'abc123' }],
+          has_more: false,
+          this_time_tokens: 10,
+        })
+      );
+
+      const result = await client.sessions.getMessages(sessionId, {
+        format: 'openai',
+      });
+      expect(result).toBeDefined();
+      expect(result.metas).toBeDefined();
+      expect(result.metas).toHaveLength(1);
+      expect(result.metas[0]).toEqual({ source: 'web', request_id: 'abc123' });
+      // Verify order matches items/ids
+      expect(result.metas.length).toBe(result.items.length);
+      expect(result.metas.length).toBe(result.ids.length);
+    });
+
+    test('should get messages with empty metas', async () => {
+      const sessionId = 'test-session-id';
+      client.mock().onGet(`/session/${sessionId}/messages`, () =>
+        mockGetMessagesOutput({
+          items: [{ role: 'user', content: 'Hello' }],
+          ids: ['msg-1'],
+          metas: [{}], // Empty meta for message without user meta
+          has_more: false,
+          this_time_tokens: 10,
+        })
+      );
+
+      const result = await client.sessions.getMessages(sessionId, {
+        format: 'openai',
+      });
+      expect(result.metas).toHaveLength(1);
+      expect(result.metas[0]).toEqual({});
+    });
+
+    test('should patch message meta - add new keys', async () => {
+      const sessionId = 'test-session-id';
+      const messageId = 'msg-1';
+      client.mock().onPatch(`/session/${sessionId}/messages/${messageId}/meta`, (options) => {
+        const data = options?.jsonData as Record<string, unknown>;
+        expect(data?.meta).toEqual({ new_key: 'new_value' });
+        return { meta: { existing: 'value', new_key: 'new_value' } };
+      });
+
+      const result = await client.sessions.patchMessageMeta(
+        sessionId,
+        messageId,
+        { new_key: 'new_value' }
+      );
+      expect(result).toEqual({ existing: 'value', new_key: 'new_value' });
+    });
+
+    test('should patch message meta - update existing keys', async () => {
+      const sessionId = 'test-session-id';
+      const messageId = 'msg-1';
+      client.mock().onPatch(`/session/${sessionId}/messages/${messageId}/meta`, () => {
+        return { meta: { key: 'updated_value', other: 'preserved' } };
+      });
+
+      const result = await client.sessions.patchMessageMeta(
+        sessionId,
+        messageId,
+        { key: 'updated_value' }
+      );
+      expect(result).toEqual({ key: 'updated_value', other: 'preserved' });
+    });
+
+    test('should patch message meta - delete keys with null', async () => {
+      const sessionId = 'test-session-id';
+      const messageId = 'msg-1';
+      client.mock().onPatch(`/session/${sessionId}/messages/${messageId}/meta`, (options) => {
+        const data = options?.jsonData as Record<string, unknown>;
+        expect(data?.meta).toEqual({ deleted_key: null });
+        return { meta: { remaining: 'value' } }; // deleted_key was removed
+      });
+
+      const result = await client.sessions.patchMessageMeta(
+        sessionId,
+        messageId,
+        { deleted_key: null }
+      );
+      expect(result).toEqual({ remaining: 'value' });
+      expect(result.deleted_key).toBeUndefined();
+    });
   });
 
   describe('Disks API', () => {

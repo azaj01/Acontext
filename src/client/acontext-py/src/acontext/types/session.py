@@ -245,6 +245,10 @@ class GetMessagesOutput(BaseModel):
         ...,
         description="List of message UUIDs corresponding to each item in the same order",
     )
+    metas: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of user-provided metadata for each message (same order as items/ids)",
+    )
     next_cursor: str | None = Field(None, description="Cursor for pagination")
     has_more: bool = Field(..., description="Whether there are more items")
     this_time_tokens: int = Field(
