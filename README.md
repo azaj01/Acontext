@@ -75,10 +75,10 @@ Acontext is the context data platform built for production AI agents. Its purpos
 
 # 🚀 Step-by-step Quickstart
 
-## Connect to Acontext
+### Connect to Acontext
 
 1. Go to [Acontext.io](https://acontext.io), claim your free credits.
-2. Go through a one-click onboarding to get your API Key: `sk-ac-xxx`
+2. Go through a one-click onboarding to get your API Key (starts with `sk-ac`)
 
 <div align="center">
     <picture>
