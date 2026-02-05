@@ -194,7 +194,7 @@ export function Hero() {
           style={{ transformStyle: 'preserve-3d' }}
         >
           <p className="text-lg sm:text-xl text-muted-foreground hero-tagline">
-            One place for agents to
+            Context Data Platform for AI Agents
           </p>
           <h1
             ref={titleRef}
@@ -210,27 +210,27 @@ export function Hero() {
           className="max-w-3xl mx-auto space-y-3 sm:space-y-4 animate-fade-in animation-delay-600 px-2 sm:px-0 will-change-transform"
         >
           <p className="text-sm sm:text-base md:text-lg text-muted-foreground leading-relaxed">
-            The context data platform for production agents
+            Think of it as Supabase, but purpose-built for agent context
           </p>
           <div className="cursor-pointer flex flex-wrap items-center justify-center gap-x-2 sm:gap-x-3 gap-y-2 text-xs sm:text-sm md:text-base text-muted-foreground/80">
             <span className="px-2 sm:px-3 py-1 sm:py-1.5 rounded-md bg-muted/50 border border-border/50 transition-all duration-200 hover:bg-muted/80 hover:border-foreground/40 hover:text-foreground/90">
-              Multi-modal Storage
+              Unified Storage
             </span>
             <span className="text-muted-foreground/40 hidden sm:inline">·</span>
             <span className="px-2 sm:px-3 py-1 sm:py-1.5 rounded-md bg-muted/50 border border-border/50 transition-all duration-200 hover:bg-muted/80 hover:border-foreground/40 hover:text-foreground/90">
-              Task Monitoring
+              Context Engineering
             </span>
             <span className="text-muted-foreground/40 hidden sm:inline">·</span>
             <span className="px-2 sm:px-3 py-1 sm:py-1.5 rounded-md bg-muted/50 border border-border/50 transition-all duration-200 hover:bg-muted/80 hover:border-foreground/40 hover:text-foreground/90">
-              Pattern Learning
+              Observability
             </span>
           </div>
           <p className="text-xs sm:text-sm md:text-base text-muted-foreground/70 leading-relaxed max-w-2xl mx-auto">
-            Identify successful execution patterns through the{' '}
+            Scale from local demos to production without rebuilding context infrastructure —{' '}
             <span className="font-medium text-foreground/90 sm:whitespace-nowrap">
-              Store → Observe → Learn → Act
+              messages, files, skills
             </span>{' '}
-            loop, so agents act smarter and succeed more over time.
+            all in one place with built-in context management.
           </p>
         </div>
 
