@@ -39,7 +39,7 @@ We help agents scale from local demos to production without rebuilding context i
 
 #### How Acontext Solves It
 
-- **One unified storage** for messages, files, skills, and more
+- **One unified storage** for messages, files, skills, and more. Integrated with Claude Agent SDK, AI-SDK, OpenAI SDK...
 - **Built-in context management** methods — just one argument, zero code
 - **Replay** agent trajectory in Dashboard
 - **Observe** agent with background monitor to estimate success rate
