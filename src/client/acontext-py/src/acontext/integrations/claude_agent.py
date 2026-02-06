@@ -23,6 +23,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable
 
@@ -32,6 +33,16 @@ from ..errors import APIError
 __all__ = ["ClaudeAgentStorage"]
 
 logger = logging.getLogger(__name__)
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _is_uuid(value: str) -> bool:
+    """Return ``True`` if *value* looks like a UUID v4 (or any UUID)."""
+    return bool(_UUID_RE.match(value))
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +105,20 @@ def _is_assistant_message(msg: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _validate_session_id(sid: str | None) -> str | None:
+    """Return *sid* if it is a valid UUID, otherwise warn and return ``None``."""
+    if sid is None:
+        return None
+    if not isinstance(sid, str):
+        return None
+    if not _is_uuid(sid):
+        logger.warning(
+            "Ignoring non-UUID session_id from Claude stream: %r", sid
+        )
+        return None
+    return sid
+
+
 def get_session_id_from_message(msg: dict) -> str | None:
     """Try to extract a Claude session id from *msg*.
 
@@ -101,20 +126,23 @@ def get_session_id_from_message(msg: dict) -> str | None:
     1. ``SystemMessage`` with ``subtype == "init"`` → ``data.get("session_id")``.
     2. ``ResultMessage`` / ``StreamEvent`` → ``.get("session_id")``.
 
-    Returns ``None`` when the message does not carry a session id.
+    Returns ``None`` when the message does not carry a session id or
+    when the extracted value is not a valid UUID format.
     """
     # SystemMessage init
     if _is_system_message(msg):
         if msg.get("subtype") == "init":
             data = msg.get("data")
             if isinstance(data, dict):
-                return data.get("session_id")  # safe access
+                return _validate_session_id(data.get("session_id"))
         return None
 
     # ResultMessage / StreamEvent
     if _is_result_message(msg) or _is_stream_event(msg):
         sid = msg.get("session_id")
-        return sid if isinstance(sid, str) else None
+        if not isinstance(sid, str):
+            return None
+        return _validate_session_id(sid)
 
     return None
 

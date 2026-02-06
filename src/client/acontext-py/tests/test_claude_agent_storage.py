@@ -60,7 +60,16 @@ def mock_store():
 # ---------------------------------------------------------------------------
 
 
-def _system_init(session_id: str = "claude-session-123") -> dict:
+_UUID_DEFAULT = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+_UUID_DISCOVERED = "44444444-4444-4444-4444-444444444444"
+_UUID_FROM_RESULT = "55555555-5555-5555-5555-555555555555"
+_UUID_FROM_STREAM = "66666666-6666-6666-6666-666666666666"
+_UUID_FLOW = "77777777-7777-7777-7777-777777777777"
+_UUID_FIRST = "88888888-8888-8888-8888-888888888888"
+_UUID_SECOND = "99999999-9999-9999-9999-999999999999"
+
+
+def _system_init(session_id: str = _UUID_DEFAULT) -> dict:
     return {"subtype": "init", "data": {"session_id": session_id}}
 
 
@@ -87,11 +96,11 @@ def _assistant(
     return msg
 
 
-def _result_message(session_id: str = "result-session") -> dict:
+def _result_message(session_id: str = _UUID_DEFAULT) -> dict:
     return {"subtype": "end", "session_id": session_id}
 
 
-def _stream_event(session_id: str = "stream-session") -> dict:
+def _stream_event(session_id: str = _UUID_DEFAULT) -> dict:
     return {"uuid": "evt-1", "session_id": session_id, "event": "delta"}
 
 
@@ -299,7 +308,7 @@ class TestAssistantMessageConversion:
 
 class TestSessionIdExtraction:
     def test_system_init(self):
-        assert get_session_id_from_message(_system_init("sid-1")) == "sid-1"
+        assert get_session_id_from_message(_system_init(_UUID_DEFAULT)) == _UUID_DEFAULT
 
     def test_system_init_missing_session_id(self):
         """data dict without session_id → None, no crash."""
@@ -314,16 +323,26 @@ class TestSessionIdExtraction:
         assert get_session_id_from_message(_system_other()) is None
 
     def test_result_message(self):
-        assert get_session_id_from_message(_result_message("r-1")) == "r-1"
+        assert get_session_id_from_message(_result_message(_UUID_FROM_RESULT)) == _UUID_FROM_RESULT
 
     def test_stream_event(self):
-        assert get_session_id_from_message(_stream_event("s-1")) == "s-1"
+        assert get_session_id_from_message(_stream_event(_UUID_FROM_STREAM)) == _UUID_FROM_STREAM
 
     def test_user_message_returns_none(self):
         assert get_session_id_from_message(_user_text()) is None
 
     def test_assistant_message_returns_none(self):
         assert get_session_id_from_message(_assistant(TEXT)) is None
+
+    def test_non_uuid_session_id_returns_none(self):
+        """Non-UUID session_id from Claude stream → None with warning."""
+        assert get_session_id_from_message(_system_init("not-a-uuid")) is None
+
+    def test_non_uuid_result_session_id_returns_none(self):
+        assert get_session_id_from_message(_result_message("invalid")) is None
+
+    def test_non_uuid_stream_session_id_returns_none(self):
+        assert get_session_id_from_message(_stream_event("invalid")) is None
 
 
 # ===================================================================
@@ -415,30 +434,30 @@ class TestClaudeAgentStorageSessionDiscovery:
         storage = ClaudeAgentStorage(client=async_client)
         assert storage.session_id is None
 
-        await storage.save_message(_system_init("discovered-sid"))
-        assert storage.session_id == "discovered-sid"
+        await storage.save_message(_system_init(_UUID_DISCOVERED))
+        assert storage.session_id == _UUID_DISCOVERED
 
         # Now user message should be stored
         await storage.save_message(_user_text("After init"))
         mock_store.assert_awaited_once()
         args = mock_store.call_args
-        assert args[0][0] == "discovered-sid"  # session_id positional arg
+        assert args[0][0] == _UUID_DISCOVERED  # session_id positional arg
 
     @pytest.mark.asyncio
     async def test_session_id_from_result_message(
         self, async_client, mock_store
     ):
         storage = ClaudeAgentStorage(client=async_client)
-        await storage.save_message(_result_message("from-result"))
-        assert storage.session_id == "from-result"
+        await storage.save_message(_result_message(_UUID_FROM_RESULT))
+        assert storage.session_id == _UUID_FROM_RESULT
 
     @pytest.mark.asyncio
     async def test_session_id_from_stream_event(
         self, async_client, mock_store
     ):
         storage = ClaudeAgentStorage(client=async_client)
-        await storage.save_message(_stream_event("from-stream"))
-        assert storage.session_id == "from-stream"
+        await storage.save_message(_stream_event(_UUID_FROM_STREAM))
+        assert storage.session_id == _UUID_FROM_STREAM
 
     @pytest.mark.asyncio
     async def test_user_before_session_id_creates_session(
@@ -622,8 +641,8 @@ class TestClaudeAgentStorageFullFlow:
         storage = ClaudeAgentStorage(client=async_client)
 
         # 1. System init → sets session_id, not stored
-        await storage.save_message(_system_init("flow-session"))
-        assert storage.session_id == "flow-session"
+        await storage.save_message(_system_init(_UUID_FLOW))
+        assert storage.session_id == _UUID_FLOW
         mock_store.assert_not_awaited()
 
         # 2. User message → stored
@@ -633,7 +652,7 @@ class TestClaudeAgentStorageFullFlow:
         assert kwargs["blob"]["role"] == "user"
 
         # 3. Stream events → not stored
-        await storage.save_message(_stream_event("flow-session"))
+        await storage.save_message(_stream_event(_UUID_FLOW))
         assert mock_store.await_count == 1  # unchanged
 
         # 4. Assistant reply → stored
@@ -648,7 +667,7 @@ class TestClaudeAgentStorageFullFlow:
         assert kwargs["meta"] == {"model": "claude-sonnet-4-20250514"}
 
         # 5. Result message → not stored
-        await storage.save_message(_result_message("flow-session"))
+        await storage.save_message(_result_message(_UUID_FLOW))
         assert mock_store.await_count == 2  # unchanged
 
     @pytest.mark.asyncio
@@ -657,7 +676,7 @@ class TestClaudeAgentStorageFullFlow:
             client=async_client, include_thinking=True
         )
 
-        await storage.save_message(_system_init("flow-session"))
+        await storage.save_message(_system_init(_UUID_FLOW))
         await storage.save_message(
             _assistant(THINKING, TEXT, model="claude-sonnet-4-20250514")
         )
@@ -677,11 +696,11 @@ class TestClaudeAgentStorageSessionIdNotOverwritten:
         self, async_client, mock_store
     ):
         storage = ClaudeAgentStorage(client=async_client)
-        await storage.save_message(_system_init("first"))
-        assert storage.session_id == "first"
+        await storage.save_message(_system_init(_UUID_FIRST))
+        assert storage.session_id == _UUID_FIRST
 
-        await storage.save_message(_result_message("second"))
-        assert storage.session_id == "first"  # not overwritten
+        await storage.save_message(_result_message(_UUID_SECOND))
+        assert storage.session_id == _UUID_FIRST  # not overwritten
 
     @pytest.mark.asyncio
     async def test_explicit_session_id_not_overwritten(
@@ -690,7 +709,7 @@ class TestClaudeAgentStorageSessionIdNotOverwritten:
         storage = ClaudeAgentStorage(
             client=async_client, session_id="explicit"
         )
-        await storage.save_message(_system_init("from-stream"))
+        await storage.save_message(_system_init(_UUID_FROM_STREAM))
         assert storage.session_id == "explicit"
 
 
@@ -823,15 +842,15 @@ class TestClaudeAgentStorageSessionCreation:
             new_callable=AsyncMock,
         ) as m_create:
             m_store.return_value = MagicMock(id="msg-id")
-            m_create.return_value = MagicMock(id="discovered-sid")
+            m_create.return_value = MagicMock(id=_UUID_DISCOVERED)
 
             storage = ClaudeAgentStorage(client=async_client)
-            await storage.save_message(_system_init("discovered-sid"))
+            await storage.save_message(_system_init(_UUID_DISCOVERED))
             await storage.save_message(_user_text("Hi"))
 
             m_create.assert_awaited_once()
             _, kwargs = m_create.call_args
-            assert kwargs["use_uuid"] == "discovered-sid"
+            assert kwargs["use_uuid"] == _UUID_DISCOVERED
 
     @pytest.mark.asyncio
     async def test_session_created_without_uuid_when_no_session_id(self, async_client):

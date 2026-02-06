@@ -94,7 +94,11 @@ for await (const message of q) {
 
 ### Auto-discovered session id
 
-By default, `ClaudeAgentStorage` discovers the session id from the Claude Agent SDK stream (from the `SystemMessage` with `subtype == "init"` in Python, or system message with `session_id` field in TypeScript):
+By default, `ClaudeAgentStorage` discovers the session id from the Claude Agent SDK.
+
+When the Claude session id is a valid UUID, Acontext **reuses it as the Acontext session id** (via `use_uuid`). This means the Acontext session and the Claude session share the same id, making it easy to correlate them across systems.
+
+If the Claude stream provides a non-UUID session id, it is ignored and Acontext generates its own session id instead.
 
 <Tabs>
 <Tab title="Python">
@@ -105,7 +109,7 @@ storage = ClaudeAgentStorage(client=acontext_client)
 async for message in claude_client.receive_response():
     await storage.save_message(message)
 
-# After init: storage.session_id is set
+# After init: storage.session_id matches the Claude session id
 print(storage.session_id)
 ```
 </Tab>
@@ -119,7 +123,7 @@ for await (const message of q) {
   await storage.saveMessage(message);
 }
 
-// After init: storage.sessionId is set
+// After init: storage.sessionId matches the Claude session id
 console.log(storage.sessionId);
 ```
 </Tab>

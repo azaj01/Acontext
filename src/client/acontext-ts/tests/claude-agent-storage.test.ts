@@ -31,7 +31,15 @@ import {
  * message object under `message`. These factories replicate that structure.
  */
 
-function systemInit(sessionId = 'claude-session-123'): Record<string, unknown> {
+const UUID_DEFAULT = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+const UUID_DISCOVERED = '44444444-4444-4444-4444-444444444444';
+const UUID_FROM_RESULT = '55555555-5555-5555-5555-555555555555';
+const UUID_FROM_STREAM = '66666666-6666-6666-6666-666666666666';
+const UUID_FLOW = '77777777-7777-7777-7777-777777777777';
+const UUID_FIRST = '88888888-8888-8888-8888-888888888888';
+const UUID_SECOND = '99999999-9999-9999-9999-999999999999';
+
+function systemInit(sessionId = UUID_DEFAULT): Record<string, unknown> {
   return { type: 'system', session_id: sessionId };
 }
 
@@ -83,13 +91,13 @@ function assistantMessage(
 }
 
 function resultMessage(
-  sessionId = 'result-session'
+  sessionId = UUID_DEFAULT
 ): Record<string, unknown> {
   return { type: 'result', session_id: sessionId };
 }
 
 function streamEvent(
-  sessionId = 'stream-session'
+  sessionId = UUID_DEFAULT
 ): Record<string, unknown> {
   return { type: 'stream_event', session_id: sessionId };
 }
@@ -431,7 +439,7 @@ describe('Assistant message conversion (claudeAssistantMessageToAnthropicBlob)',
 
 describe('Session id extraction (getSessionIdFromMessage)', () => {
   test('system init with session_id', () => {
-    expect(getSessionIdFromMessage(systemInit('sid-1'))).toBe('sid-1');
+    expect(getSessionIdFromMessage(systemInit(UUID_DEFAULT))).toBe(UUID_DEFAULT);
   });
 
   test('system without session_id', () => {
@@ -439,11 +447,11 @@ describe('Session id extraction (getSessionIdFromMessage)', () => {
   });
 
   test('result message with session_id', () => {
-    expect(getSessionIdFromMessage(resultMessage('r-1'))).toBe('r-1');
+    expect(getSessionIdFromMessage(resultMessage(UUID_FROM_RESULT))).toBe(UUID_FROM_RESULT);
   });
 
   test('stream event with session_id', () => {
-    expect(getSessionIdFromMessage(streamEvent('s-1'))).toBe('s-1');
+    expect(getSessionIdFromMessage(streamEvent(UUID_FROM_STREAM))).toBe(UUID_FROM_STREAM);
   });
 
   test('user message → null', () => {
@@ -458,6 +466,18 @@ describe('Session id extraction (getSessionIdFromMessage)', () => {
     expect(
       getSessionIdFromMessage({ type: 'system', session_id: 12345 })
     ).toBeNull();
+  });
+
+  test('non-UUID session_id → null', () => {
+    expect(getSessionIdFromMessage(systemInit('not-a-uuid'))).toBeNull();
+  });
+
+  test('non-UUID result session_id → null', () => {
+    expect(getSessionIdFromMessage(resultMessage('invalid'))).toBeNull();
+  });
+
+  test('non-UUID stream session_id → null', () => {
+    expect(getSessionIdFromMessage(streamEvent('invalid'))).toBeNull();
   });
 });
 
@@ -596,28 +616,28 @@ describe('ClaudeAgentStorage – session discovery', () => {
     });
     expect(storage.sessionId).toBeNull();
 
-    await storage.saveMessage(systemInit('discovered-sid'));
-    expect(storage.sessionId).toBe('discovered-sid');
+    await storage.saveMessage(systemInit(UUID_DISCOVERED));
+    expect(storage.sessionId).toBe(UUID_DISCOVERED);
 
     await storage.saveMessage(userMessage('After init'));
     expect(storeCalls.length).toBe(1);
-    expect(storeCalls[0].sessionId).toBe('discovered-sid');
+    expect(storeCalls[0].sessionId).toBe(UUID_DISCOVERED);
   });
 
   test('session_id from result message', async () => {
     const storage = new ClaudeAgentStorage({
       client: client as unknown as AcontextClientLike,
     });
-    await storage.saveMessage(resultMessage('from-result'));
-    expect(storage.sessionId).toBe('from-result');
+    await storage.saveMessage(resultMessage(UUID_FROM_RESULT));
+    expect(storage.sessionId).toBe(UUID_FROM_RESULT);
   });
 
   test('session_id from stream event', async () => {
     const storage = new ClaudeAgentStorage({
       client: client as unknown as AcontextClientLike,
     });
-    await storage.saveMessage(streamEvent('from-stream'));
-    expect(storage.sessionId).toBe('from-stream');
+    await storage.saveMessage(streamEvent(UUID_FROM_STREAM));
+    expect(storage.sessionId).toBe(UUID_FROM_STREAM);
   });
 
   test('user before session_id → _ensureSession creates session', async () => {
@@ -903,13 +923,13 @@ describe('ClaudeAgentStorage – session creation', () => {
     const storage = new ClaudeAgentStorage({
       client: client as unknown as AcontextClientLike,
     });
-    await storage.saveMessage(systemInit('discovered-sid'));
+    await storage.saveMessage(systemInit(UUID_DISCOVERED));
     await storage.saveMessage(userMessage('Hi'));
 
     expect(createCalls.length).toBe(1);
     expect(
       (createCalls[0].options as Record<string, unknown>).use_uuid
-    ).toBe('discovered-sid');
+    ).toBe(UUID_DISCOVERED);
   });
 
   test('no session_id → Acontext generates one', async () => {
@@ -980,11 +1000,11 @@ describe('ClaudeAgentStorage – session_id not overwritten', () => {
     const storage = new ClaudeAgentStorage({
       client: client as unknown as AcontextClientLike,
     });
-    await storage.saveMessage(systemInit('first'));
-    expect(storage.sessionId).toBe('first');
+    await storage.saveMessage(systemInit(UUID_FIRST));
+    expect(storage.sessionId).toBe(UUID_FIRST);
 
-    await storage.saveMessage(resultMessage('second'));
-    expect(storage.sessionId).toBe('first'); // not overwritten
+    await storage.saveMessage(resultMessage(UUID_SECOND));
+    expect(storage.sessionId).toBe(UUID_FIRST); // not overwritten
   });
 
   test('explicit session_id not overwritten by stream', async () => {
@@ -995,7 +1015,7 @@ describe('ClaudeAgentStorage – session_id not overwritten', () => {
       client: client as unknown as AcontextClientLike,
       sessionId: 'explicit',
     });
-    await storage.saveMessage(systemInit('from-stream'));
+    await storage.saveMessage(systemInit(UUID_FROM_STREAM));
     expect(storage.sessionId).toBe('explicit');
   });
 });
@@ -1056,8 +1076,8 @@ describe('ClaudeAgentStorage – full flow', () => {
     });
 
     // 1. System init → sets session_id, not stored
-    await storage.saveMessage(systemInit('flow-session'));
-    expect(storage.sessionId).toBe('flow-session');
+    await storage.saveMessage(systemInit(UUID_FLOW));
+    expect(storage.sessionId).toBe(UUID_FLOW);
     expect(storeCalls.length).toBe(0);
 
     // 2. User message → stored
@@ -1067,7 +1087,7 @@ describe('ClaudeAgentStorage – full flow', () => {
     expect((userOpts.blob as Record<string, unknown>).role).toBe('user');
 
     // 3. Stream events → not stored
-    await storage.saveMessage(streamEvent('flow-session'));
+    await storage.saveMessage(streamEvent(UUID_FLOW));
     expect(storeCalls.length).toBe(1); // unchanged
 
     // 4. Assistant reply → stored
@@ -1087,7 +1107,7 @@ describe('ClaudeAgentStorage – full flow', () => {
     expect(assistOpts.meta).toEqual({ model: 'claude-sonnet-4-20250514' });
 
     // 5. Result message → not stored
-    await storage.saveMessage(resultMessage('flow-session'));
+    await storage.saveMessage(resultMessage(UUID_FLOW));
     expect(storeCalls.length).toBe(2); // unchanged
   });
 
@@ -1100,7 +1120,7 @@ describe('ClaudeAgentStorage – full flow', () => {
       includeThinking: true,
     });
 
-    await storage.saveMessage(systemInit('flow-session'));
+    await storage.saveMessage(systemInit(UUID_FLOW));
     await storage.saveMessage(
       assistantMessage([THINKING, TEXT], {
         model: 'claude-sonnet-4-20250514',

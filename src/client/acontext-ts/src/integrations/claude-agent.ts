@@ -104,13 +104,30 @@ function isReplayMessage(msg: Record<string, unknown>): boolean {
 // Helpers – session id extraction
 // ---------------------------------------------------------------------------
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Return `sid` if it is a valid UUID, otherwise warn and return `null`.
+ */
+function validateSessionId(sid: string): string | null {
+  if (!UUID_RE.test(sid)) {
+    console.warn(
+      `Ignoring non-UUID session_id from Claude stream: "${sid}"`
+    );
+    return null;
+  }
+  return sid;
+}
+
 /**
  * Try to extract a Claude session id from a non-storable message.
  *
  * In the TS Claude Agent SDK, `session_id` is a flat field on system,
  * result, stream_event, and other non-storable message types.
  *
- * Returns `null` when the message does not carry a session id.
+ * Returns `null` when the message does not carry a session id or
+ * when the extracted value is not a valid UUID format.
  */
 export function getSessionIdFromMessage(
   msg: Record<string, unknown>
@@ -120,7 +137,10 @@ export function getSessionIdFromMessage(
     return null;
   }
   const sid = msg.session_id;
-  return typeof sid === 'string' ? sid : null;
+  if (typeof sid !== 'string') {
+    return null;
+  }
+  return validateSessionId(sid);
 }
 
 // ---------------------------------------------------------------------------
