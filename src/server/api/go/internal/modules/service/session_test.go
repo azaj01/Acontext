@@ -577,7 +577,7 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "valid text part",
 			part: PartIn{
-				Type: "text",
+				Type: model.PartTypeText,
 				Text: "This is a piece of text",
 			},
 			wantErr: false,
@@ -585,7 +585,7 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "text part with empty text",
 			part: PartIn{
-				Type: "text",
+				Type: model.PartTypeText,
 				Text: "",
 			},
 			wantErr: true,
@@ -594,10 +594,10 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "valid tool-call part",
 			part: PartIn{
-				Type: "tool-call",
+				Type: model.PartTypeToolCall,
 				Meta: map[string]interface{}{
-					"name": "calculator", // UNIFIED FORMAT: was "tool_name", now "name"
-					"arguments": map[string]interface{}{
+					model.MetaKeyName: "calculator", // UNIFIED FORMAT: was "tool_name", now "name"
+					model.MetaKeyArguments: map[string]interface{}{
 						"expression": "2 + 2",
 					},
 				},
@@ -607,9 +607,9 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "tool-call part missing name",
 			part: PartIn{
-				Type: "tool-call",
+				Type: model.PartTypeToolCall,
 				Meta: map[string]interface{}{
-					"arguments": map[string]interface{}{
+					model.MetaKeyArguments: map[string]interface{}{
 						"expression": "2 + 2",
 					},
 				},
@@ -620,9 +620,9 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "tool-call part missing arguments",
 			part: PartIn{
-				Type: "tool-call",
+				Type: model.PartTypeToolCall,
 				Meta: map[string]interface{}{
-					"name": "calculator", // UNIFIED FORMAT
+					model.MetaKeyName: "calculator", // UNIFIED FORMAT
 				},
 			},
 			wantErr: true,
@@ -631,9 +631,9 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "valid tool-result part",
 			part: PartIn{
-				Type: "tool-result",
+				Type: model.PartTypeToolResult,
 				Meta: map[string]interface{}{
-					"tool_call_id": "call_123",
+					model.MetaKeyToolCallID: "call_123",
 					"result":       "4",
 				},
 			},
@@ -642,7 +642,7 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "tool-result part missing tool_call_id",
 			part: PartIn{
-				Type: "tool-result",
+				Type: model.PartTypeToolResult,
 				Meta: map[string]interface{}{
 					"result": "4",
 				},
@@ -653,9 +653,9 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "valid data part",
 			part: PartIn{
-				Type: "data",
+				Type: model.PartTypeData,
 				Meta: map[string]interface{}{
-					"data_type": "json",
+					model.MetaKeyDataType: "json",
 					"content":   `{"key": "value"}`,
 				},
 			},
@@ -664,13 +664,32 @@ func TestPartIn_Validate(t *testing.T) {
 		{
 			name: "data part missing data_type",
 			part: PartIn{
-				Type: "data",
+				Type: model.PartTypeData,
 				Meta: map[string]interface{}{
 					"content": `{"key": "value"}`,
 				},
 			},
 			wantErr: true,
 			errMsg:  "data part requires 'data_type' in meta",
+		},
+		{
+			name: "valid thinking part",
+			part: PartIn{
+				Type: model.PartTypeThinking,
+				Text: "Let me reason about this...",
+				Meta: map[string]interface{}{
+					model.MetaKeySignature: "sig_abc123",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "thinking part without text (invalid - text is required for thinking)",
+			part: PartIn{
+				Type: model.PartTypeThinking,
+			},
+			wantErr: true,
+			errMsg:  "thinking part requires non-empty text field",
 		},
 		{
 			name: "invalid type",
@@ -717,10 +736,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather"}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather"}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -749,10 +768,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather"}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather"}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -773,10 +792,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather", "tool_call_id": "call_abc123"}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather", model.MetaKeyToolCallID: "call_abc123"}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -799,10 +818,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather", "tool_call_id": "call_wrong"}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather", model.MetaKeyToolCallID: "call_wrong"}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -823,10 +842,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather", "tool_call_id": "call_abc123"}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather", model.MetaKeyToolCallID: "call_abc123"}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -847,10 +866,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -869,10 +888,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": ""}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: ""}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -891,10 +910,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather"}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather"}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -915,13 +934,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID: projectID,
 				SessionID: sessionID,
-				Role:      "user",
+				Role:      model.RoleUser,
 				Parts: []PartIn{
-					{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather"}},
-					{Type: "tool-result", Meta: map[string]interface{}{"name": "calculate"}},
+					{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather"}},
+					{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "calculate"}},
 				},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -946,13 +965,13 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID: projectID,
 				SessionID: sessionID,
-				Role:      "user",
+				Role:      model.RoleUser,
 				Parts: []PartIn{
-					{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather"}},
-					{Type: "tool-result", Meta: map[string]interface{}{"name": "calculate"}},
+					{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather"}},
+					{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "calculate"}},
 				},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -975,10 +994,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": 123}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: 123}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -997,10 +1016,10 @@ func TestSessionService_StoreMessage_GeminiFunctionResponse(t *testing.T) {
 			input: StoreMessageInput{
 				ProjectID:   projectID,
 				SessionID:   sessionID,
-				Role:        "user",
-				Parts:       []PartIn{{Type: "tool-result", Meta: map[string]interface{}{"name": "get_weather", "tool_call_id": 123}}},
+				Role:        model.RoleUser,
+				Parts:       []PartIn{{Type: model.PartTypeToolResult, Meta: map[string]interface{}{model.MetaKeyName: "get_weather", model.MetaKeyToolCallID: 123}}},
 				Format:      model.FormatGemini,
-				MessageMeta: map[string]interface{}{"source_format": "gemini"},
+				MessageMeta: map[string]interface{}{model.MsgMetaSourceFormat: "gemini"},
 			},
 			setup: func(repo *MockSessionRepo, assetRepo *MockAssetReferenceRepo) {
 				// Mock Get to return valid session
@@ -1109,7 +1128,7 @@ func TestSessionService_GetMessages(t *testing.T) {
 			},
 			setup: func(repo *MockSessionRepo) {
 				msgs := []model.Message{
-					{ID: uuid.New(), SessionID: sessionID, Role: "user"},
+					{ID: uuid.New(), SessionID: sessionID, Role: model.RoleUser},
 				}
 				repo.On("ListBySessionWithCursor", ctx, sessionID, time.Time{}, uuid.UUID{}, 11, false).Return(msgs, nil)
 			},
@@ -1124,7 +1143,7 @@ func TestSessionService_GetMessages(t *testing.T) {
 			},
 			setup: func(repo *MockSessionRepo) {
 				msgs := []model.Message{
-					{ID: uuid.New(), SessionID: sessionID, Role: "user"},
+					{ID: uuid.New(), SessionID: sessionID, Role: model.RoleUser},
 				}
 				repo.On("ListBySessionWithCursor", ctx, sessionID, time.Time{}, uuid.UUID{}, 11, true).Return(msgs, nil)
 			},
@@ -1153,8 +1172,8 @@ func TestSessionService_GetMessages(t *testing.T) {
 			},
 			setup: func(repo *MockSessionRepo) {
 				msgs := []model.Message{
-					{ID: uuid.New(), SessionID: sessionID, Role: "user"},
-					{ID: uuid.New(), SessionID: sessionID, Role: "assistant"},
+					{ID: uuid.New(), SessionID: sessionID, Role: model.RoleUser},
+					{ID: uuid.New(), SessionID: sessionID, Role: model.RoleAssistant},
 				}
 				repo.On("ListAllMessagesBySession", ctx, sessionID).Return(msgs, nil)
 			},
@@ -1169,7 +1188,7 @@ func TestSessionService_GetMessages(t *testing.T) {
 			},
 			setup: func(repo *MockSessionRepo) {
 				msgs := []model.Message{
-					{ID: uuid.New(), SessionID: sessionID, Role: "user"},
+					{ID: uuid.New(), SessionID: sessionID, Role: model.RoleUser},
 				}
 				repo.On("ListAllMessagesBySession", ctx, sessionID).Return(msgs, nil)
 			},
@@ -1259,16 +1278,16 @@ func TestSessionService_GetMessages_SortOrder(t *testing.T) {
 				TimeDesc:  false,
 			},
 			repoMessages: []model.Message{
-				{ID: msg1ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-3 * time.Hour)},
-				{ID: msg2ID, SessionID: sessionID, Role: "assistant", CreatedAt: now.Add(-2 * time.Hour)},
-				{ID: msg3ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-1 * time.Hour)},
+				{ID: msg1ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-3 * time.Hour)},
+				{ID: msg2ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now.Add(-2 * time.Hour)},
+				{ID: msg3ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-1 * time.Hour)},
 			},
 			expectedOrder: []uuid.UUID{msg1ID, msg2ID, msg3ID},
 			setup: func(repo *MockSessionRepo) {
 				msgs := []model.Message{
-					{ID: msg1ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-3 * time.Hour)},
-					{ID: msg2ID, SessionID: sessionID, Role: "assistant", CreatedAt: now.Add(-2 * time.Hour)},
-					{ID: msg3ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-1 * time.Hour)},
+					{ID: msg1ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-3 * time.Hour)},
+					{ID: msg2ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now.Add(-2 * time.Hour)},
+					{ID: msg3ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-1 * time.Hour)},
 				}
 				repo.On("ListBySessionWithCursor", ctx, sessionID, time.Time{}, uuid.UUID{}, 11, false).Return(msgs, nil)
 			},
@@ -1282,17 +1301,17 @@ func TestSessionService_GetMessages_SortOrder(t *testing.T) {
 				TimeDesc:  true,
 			},
 			repoMessages: []model.Message{
-				{ID: msg3ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-1 * time.Hour)},
-				{ID: msg2ID, SessionID: sessionID, Role: "assistant", CreatedAt: now.Add(-2 * time.Hour)},
-				{ID: msg1ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-3 * time.Hour)},
+				{ID: msg3ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-1 * time.Hour)},
+				{ID: msg2ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now.Add(-2 * time.Hour)},
+				{ID: msg1ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-3 * time.Hour)},
 			},
 			expectedOrder: []uuid.UUID{msg1ID, msg2ID, msg3ID}, // Still old to new
 			setup: func(repo *MockSessionRepo) {
 				// Repo returns messages in descending order (newest first)
 				msgs := []model.Message{
-					{ID: msg3ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-1 * time.Hour)},
-					{ID: msg2ID, SessionID: sessionID, Role: "assistant", CreatedAt: now.Add(-2 * time.Hour)},
-					{ID: msg1ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-3 * time.Hour)},
+					{ID: msg3ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-1 * time.Hour)},
+					{ID: msg2ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now.Add(-2 * time.Hour)},
+					{ID: msg1ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-3 * time.Hour)},
 				}
 				repo.On("ListBySessionWithCursor", ctx, sessionID, time.Time{}, uuid.UUID{}, 11, true).Return(msgs, nil)
 			},
@@ -1306,17 +1325,17 @@ func TestSessionService_GetMessages_SortOrder(t *testing.T) {
 				TimeDesc:  false,
 			},
 			repoMessages: []model.Message{
-				{ID: msg4ID, SessionID: sessionID, Role: "user", CreatedAt: now},
-				{ID: msg2ID, SessionID: sessionID, Role: "assistant", CreatedAt: now},
-				{ID: msg1ID, SessionID: sessionID, Role: "user", CreatedAt: now},
+				{ID: msg4ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now},
+				{ID: msg2ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now},
+				{ID: msg1ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now},
 			},
 			// When timestamps are equal, sort by ID (lexicographically)
 			expectedOrder: []uuid.UUID{msg1ID, msg2ID, msg4ID}, // Assuming these IDs sort this way lexicographically
 			setup: func(repo *MockSessionRepo) {
 				msgs := []model.Message{
-					{ID: msg4ID, SessionID: sessionID, Role: "user", CreatedAt: now},
-					{ID: msg2ID, SessionID: sessionID, Role: "assistant", CreatedAt: now},
-					{ID: msg1ID, SessionID: sessionID, Role: "user", CreatedAt: now},
+					{ID: msg4ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now},
+					{ID: msg2ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now},
+					{ID: msg1ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now},
 				}
 				repo.On("ListBySessionWithCursor", ctx, sessionID, time.Time{}, uuid.UUID{}, 11, false).Return(msgs, nil)
 			},
@@ -1330,19 +1349,19 @@ func TestSessionService_GetMessages_SortOrder(t *testing.T) {
 				TimeDesc:  false,
 			},
 			repoMessages: []model.Message{
-				{ID: msg2ID, SessionID: sessionID, Role: "assistant", CreatedAt: now.Add(-2 * time.Hour)},
-				{ID: msg4ID, SessionID: sessionID, Role: "user", CreatedAt: now},
-				{ID: msg1ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-3 * time.Hour)},
-				{ID: msg3ID, SessionID: sessionID, Role: "assistant", CreatedAt: now.Add(-1 * time.Hour)},
+				{ID: msg2ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now.Add(-2 * time.Hour)},
+				{ID: msg4ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now},
+				{ID: msg1ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-3 * time.Hour)},
+				{ID: msg3ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now.Add(-1 * time.Hour)},
 			},
 			expectedOrder: []uuid.UUID{msg1ID, msg2ID, msg3ID, msg4ID},
 			setup: func(repo *MockSessionRepo) {
 				// Repo returns messages in random order
 				msgs := []model.Message{
-					{ID: msg2ID, SessionID: sessionID, Role: "assistant", CreatedAt: now.Add(-2 * time.Hour)},
-					{ID: msg4ID, SessionID: sessionID, Role: "user", CreatedAt: now},
-					{ID: msg1ID, SessionID: sessionID, Role: "user", CreatedAt: now.Add(-3 * time.Hour)},
-					{ID: msg3ID, SessionID: sessionID, Role: "assistant", CreatedAt: now.Add(-1 * time.Hour)},
+					{ID: msg2ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now.Add(-2 * time.Hour)},
+					{ID: msg4ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now},
+					{ID: msg1ID, SessionID: sessionID, Role: model.RoleUser, CreatedAt: now.Add(-3 * time.Hour)},
+					{ID: msg3ID, SessionID: sessionID, Role: model.RoleAssistant, CreatedAt: now.Add(-1 * time.Hour)},
 				}
 				repo.On("ListBySessionWithCursor", ctx, sessionID, time.Time{}, uuid.UUID{}, 11, false).Return(msgs, nil)
 			},

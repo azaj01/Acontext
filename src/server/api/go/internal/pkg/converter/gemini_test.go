@@ -1,7 +1,10 @@
 package converter
 
 import (
+	"encoding/base64"
 	"testing"
+
+	"google.golang.org/genai"
 
 	"github.com/memodb-io/Acontext/internal/modules/model"
 	"github.com/memodb-io/Acontext/internal/modules/service"
@@ -13,8 +16,8 @@ func TestGeminiConverter_Convert_TextMessage(t *testing.T) {
 	converter := &GeminiConverter{}
 
 	messages := []model.Message{
-		createTestMessage("user", []model.Part{
-			{Type: "text", Text: "Hello from Gemini!"},
+		createTestMessage(model.RoleUser, []model.Part{
+			{Type: model.PartTypeText, Text: "Hello from Gemini!"},
 		}, nil),
 	}
 
@@ -30,8 +33,8 @@ func TestGeminiConverter_Convert_AssistantMessage(t *testing.T) {
 	converter := &GeminiConverter{}
 
 	messages := []model.Message{
-		createTestMessage("assistant", []model.Part{
-			{Type: "text", Text: "I'm doing well, thank you!"},
+		createTestMessage(model.RoleAssistant, []model.Part{
+			{Type: model.PartTypeText, Text: "I'm doing well, thank you!"},
 		}, nil),
 	}
 
@@ -45,14 +48,14 @@ func TestGeminiConverter_Convert_ToolCall(t *testing.T) {
 
 	// UNIFIED FORMAT: now uses unified field names
 	messages := []model.Message{
-		createTestMessage("assistant", []model.Part{
+		createTestMessage(model.RoleAssistant, []model.Part{
 			{
-				Type: "tool-call",
+				Type: model.PartTypeToolCall,
 				Meta: map[string]any{
-					"id":        "call_123",
-					"name":      "get_weather",
-					"arguments": "{\"city\":\"SF\"}",
-					"type":      "function",
+					model.MetaKeyID:         "call_123",
+					model.MetaKeyName:       "get_weather",
+					model.MetaKeyArguments:  "{\"city\":\"SF\"}",
+					model.MetaKeySourceType: "function",
 				},
 			},
 		}, nil),
@@ -63,16 +66,58 @@ func TestGeminiConverter_Convert_ToolCall(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
+func TestGeminiConverter_Convert_ThinkingAsNativePart(t *testing.T) {
+	converter := &GeminiConverter{}
+
+	// Signature stored as base64-encoded string (as produced by Gemini normalizer)
+	sigBytes := []byte("gemini-thought-signature-data")
+	sigBase64 := base64.StdEncoding.EncodeToString(sigBytes)
+
+	messages := []model.Message{
+		createTestMessage(model.RoleAssistant, []model.Part{
+			{
+				Type: model.PartTypeThinking,
+				Text: "Let me reason about this...",
+				Meta: map[string]any{
+					model.MetaKeySignature: sigBase64,
+				},
+			},
+			{
+				Type: model.PartTypeText,
+				Text: "Here is my answer.",
+			},
+		}, nil),
+	}
+
+	result, err := converter.Convert(messages, nil)
+	require.NoError(t, err)
+
+	contents := result.([]*genai.Content)
+	require.Len(t, contents, 1)
+	require.Len(t, contents[0].Parts, 2)
+
+	// First part: thinking with Thought=true and ThoughtSignature
+	thinkingPart := contents[0].Parts[0]
+	assert.Equal(t, "Let me reason about this...", thinkingPart.Text)
+	assert.True(t, thinkingPart.Thought, "thinking part should have Thought=true")
+	assert.Equal(t, sigBytes, thinkingPart.ThoughtSignature, "ThoughtSignature should round-trip")
+
+	// Second part: regular text with Thought=false
+	textPart := contents[0].Parts[1]
+	assert.Equal(t, "Here is my answer.", textPart.Text)
+	assert.False(t, textPart.Thought, "text part should have Thought=false")
+}
+
 func TestGeminiConverter_Convert_ToolResult(t *testing.T) {
 	converter := &GeminiConverter{}
 
 	messages := []model.Message{
-		createTestMessage("user", []model.Part{
+		createTestMessage(model.RoleUser, []model.Part{
 			{
-				Type: "tool-result",
+				Type: model.PartTypeToolResult,
 				Text: "Weather is sunny",
 				Meta: map[string]any{
-					"name": "get_weather",
+					model.MetaKeyName: "get_weather",
 				},
 			},
 		}, nil),
@@ -87,9 +132,9 @@ func TestGeminiConverter_Convert_Image(t *testing.T) {
 	converter := &GeminiConverter{}
 
 	messages := []model.Message{
-		createTestMessage("user", []model.Part{
+		createTestMessage(model.RoleUser, []model.Part{
 			{
-				Type:     "image",
+				Type:     model.PartTypeImage,
 				Filename: "image.jpg",
 				Asset: &model.Asset{
 					S3Key: "assets/image.jpg",
@@ -113,10 +158,10 @@ func TestGeminiConverter_Convert_MultipleParts(t *testing.T) {
 	converter := &GeminiConverter{}
 
 	messages := []model.Message{
-		createTestMessage("user", []model.Part{
-			{Type: "text", Text: "What's in this image?"},
+		createTestMessage(model.RoleUser, []model.Part{
+			{Type: model.PartTypeText, Text: "What's in this image?"},
 			{
-				Type:     "image",
+				Type:     model.PartTypeImage,
 				Filename: "image.jpg",
 				Asset: &model.Asset{
 					S3Key: "assets/image.jpg",
@@ -141,7 +186,7 @@ func TestGeminiConverter_Convert_InvalidRole(t *testing.T) {
 
 	messages := []model.Message{
 		createTestMessage("system", []model.Part{
-			{Type: "text", Text: "System message"},
+			{Type: model.PartTypeText, Text: "System message"},
 		}, nil),
 	}
 

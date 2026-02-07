@@ -36,9 +36,11 @@
                     "group": "Meta",
                     "pages": [
                       "store/messages/special/message-meta",
-                      "store/messages/special/anthropic"
+                      "store/messages/special/anthropic",
+                      "store/messages/special/gemini"
                     ]
-                  }
+                  },
+                  "store/messages/special/format-conversion"
                 ]
               },
               "store/disk",
