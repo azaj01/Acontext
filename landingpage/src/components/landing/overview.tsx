@@ -128,7 +128,7 @@ export function FeaturesOverview() {
       className="py-12 sm:py-16 lg:py-24 px-4 sm:px-6 lg:px-8 relative overflow-hidden"
     >
       {/* Section header */}
-      <div className="max-w-7xl mx-auto mb-8 sm:mb-12">
+      <div className="w-full max-w-[768px] lg:max-w-[1200px] mx-auto mb-8 sm:mb-12">
         <div className="flex flex-col items-center gap-2 lg:gap-3">
           <h2 className="max-w-xl text-3xl sm:text-4xl lg:text-5xl leading-[1.1] text-center font-semibold text-foreground">
             Features
@@ -140,7 +140,7 @@ export function FeaturesOverview() {
       </div>
 
       {/* Main container */}
-      <div className="max-w-7xl mx-auto">
+      <div className="w-full max-w-[768px] lg:max-w-[1200px] mx-auto">
         <div
           className="border border-border dark:border-neutral-800 rounded-lg overflow-hidden bg-card dark:bg-neutral-950/50 flex flex-col lg:flex-row min-h-96 sm:min-h-112 lg:h-160"
           onMouseEnter={() => { pausedRef.current = true }}

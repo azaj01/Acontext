@@ -21,7 +21,7 @@ import { ToolCallLog, ProviderBadge, useTypingAnimation } from './shared'
 
 type Stage =
   | 'init'
-  // Messages tab
+  // Session tab
   | 'user-msg'
   | 'assistant-msg'
   | 'stored'
@@ -289,7 +289,7 @@ export function StoreDemo() {
   const [stage, setStage] = useState<Stage>('init')
   const [logCount, setLogCount] = useState(0)
   const [provider, setProvider] = useState<'openai' | 'anthropic'>('openai')
-  const [activeTab, setActiveTab] = useState<'messages' | 'disk'>('messages')
+  const [activeTab, setActiveTab] = useState<'session' | 'disk'>('session')
 
   const assistantText = useTypingAnimation(
     "I'll analyze the Q4 revenue data and prepare a summary report...",
@@ -308,7 +308,7 @@ export function StoreDemo() {
     setStage('init')
     setLogCount(0)
     setProvider('openai')
-    setActiveTab('messages')
+    setActiveTab('session')
 
     const timers: ReturnType<typeof setTimeout>[] = []
 
@@ -336,7 +336,7 @@ export function StoreDemo() {
 
   const stageIdx = STAGES.indexOf(stage)
 
-  // Messages tab flags
+  // Session tab flags
   const showUserMsg = stageIdx >= STAGES.indexOf('user-msg')
   const showAssistantMsg = stageIdx >= STAGES.indexOf('assistant-msg')
   const showStored = stageIdx >= STAGES.indexOf('stored')
@@ -360,18 +360,18 @@ export function StoreDemo() {
           <div className="border border-zinc-200 dark:border-zinc-700 rounded-lg overflow-hidden bg-white dark:bg-zinc-950 shadow-md dark:shadow-2xl">
             {/* Tab bar */}
             <div className="bg-zinc-50 dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 flex items-center px-2">
-              {/* Messages tab */}
+              {/* Session tab */}
               <div
                 className={cn(
                   'relative flex items-center gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm transition-colors',
-                  activeTab === 'messages'
+                  activeTab === 'session'
                     ? 'text-zinc-900 dark:text-white'
                     : 'text-zinc-400 dark:text-zinc-500',
                 )}
               >
                 <MessageSquare className="w-3.5 h-3.5" />
-                <span>Messages</span>
-                {activeTab === 'messages' && (
+                <span>Session</span>
+                {activeTab === 'session' && (
                   <motion.div
                     layoutId="store-tab-indicator"
                     className="absolute inset-x-0 bottom-0 h-0.5 bg-emerald-500"
@@ -398,8 +398,8 @@ export function StoreDemo() {
                 )}
               </div>
 
-              {/* Provider badge (only in Messages tab) */}
-              {activeTab === 'messages' && (
+              {/* Provider badge (only in Session tab) */}
+              {activeTab === 'session' && (
                 <div className="ml-auto flex items-center gap-2 pr-2">
                   <AnimatePresence mode="wait">
                     <motion.div
@@ -433,10 +433,10 @@ export function StoreDemo() {
             {/* Content area */}
             <div className="bg-white dark:bg-zinc-950 min-h-[220px] sm:min-h-[280px] lg:min-h-[340px] p-3 sm:p-4 overflow-y-auto max-h-[360px]">
               <AnimatePresence mode="wait">
-                {activeTab === 'messages' ? (
-                  /* Messages tab content */
+                {activeTab === 'session' ? (
+                  /* Session tab content */
                   <motion.div
-                    key="messages"
+                    key="session"
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -10 }}
