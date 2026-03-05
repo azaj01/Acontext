@@ -5,13 +5,18 @@
  * and plugin hook behavior using mocks.
  */
 
-import { jest, describe, test, expect, beforeEach, afterAll } from "@jest/globals";
+import { jest, describe, test, expect, beforeEach, afterEach, afterAll } from "@jest/globals";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import {
   resolveEnvVars,
   assertAllowedKeys,
   configSchema,
-  truncateByTokenEstimate,
-  stripInjectedContext,
+  sanitizeSkillName,
+  AcontextBridge,
+  type AcontextConfig,
+  type BridgeLogger,
 } from "../index";
 
 // ============================================================================
@@ -94,40 +99,29 @@ describe("configSchema.parse", () => {
       baseUrl: "http://localhost:3000",
       userId: "alice",
       learningSpaceId: "space-123",
+      skillsDir: "/custom/skills",
       autoCapture: false,
-      autoRecall: false,
       autoLearn: false,
-      maxSkillFiles: 5,
-      maxSkillFileTokens: 1000,
-      maxTaskSummaryTokens: 800,
-      recallSessionCount: 2,
       minTurnsForLearn: 6,
     });
     expect(cfg.apiKey).toBe("sk-ac-literal");
     expect(cfg.baseUrl).toBe("http://localhost:3000");
     expect(cfg.userId).toBe("alice");
     expect(cfg.learningSpaceId).toBe("space-123");
+    expect(cfg.skillsDir).toBe("/custom/skills");
     expect(cfg.autoCapture).toBe(false);
-    expect(cfg.autoRecall).toBe(false);
     expect(cfg.autoLearn).toBe(false);
-    expect(cfg.maxSkillFiles).toBe(5);
-    expect(cfg.maxSkillFileTokens).toBe(1000);
-    expect(cfg.maxTaskSummaryTokens).toBe(800);
-    expect(cfg.recallSessionCount).toBe(2);
     expect(cfg.minTurnsForLearn).toBe(6);
   });
 
   test("fills defaults for optional fields", () => {
     const cfg = configSchema.parse({ apiKey: "sk-ac-x" });
     expect(cfg.autoCapture).toBe(true);
-    expect(cfg.autoRecall).toBe(true);
     expect(cfg.autoLearn).toBe(true);
-    expect(cfg.maxSkillFiles).toBe(10);
-    expect(cfg.maxSkillFileTokens).toBe(2000);
-    expect(cfg.maxTaskSummaryTokens).toBe(1500);
-    expect(cfg.recallSessionCount).toBe(3);
     expect(cfg.minTurnsForLearn).toBe(4);
     expect(cfg.learningSpaceId).toBeUndefined();
+    expect(cfg.skillsDir).toContain(".openclaw");
+    expect(cfg.skillsDir).toContain("skills");
   });
 
   test("throws on missing apiKey", () => {
@@ -154,6 +148,24 @@ describe("configSchema.parse", () => {
     ).toThrow("unknown keys: badKey");
   });
 
+  test("throws on removed legacy keys", () => {
+    expect(() =>
+      configSchema.parse({ apiKey: "sk-ac-x", autoRecall: true }),
+    ).toThrow("unknown keys: autoRecall");
+    expect(() =>
+      configSchema.parse({ apiKey: "sk-ac-x", maxSkillFiles: 5 }),
+    ).toThrow("unknown keys: maxSkillFiles");
+    expect(() =>
+      configSchema.parse({ apiKey: "sk-ac-x", maxSkillFileTokens: 2000 }),
+    ).toThrow("unknown keys: maxSkillFileTokens");
+    expect(() =>
+      configSchema.parse({ apiKey: "sk-ac-x", maxTaskSummaryTokens: 1500 }),
+    ).toThrow("unknown keys: maxTaskSummaryTokens");
+    expect(() =>
+      configSchema.parse({ apiKey: "sk-ac-x", recallSessionCount: 3 }),
+    ).toThrow("unknown keys: recallSessionCount");
+  });
+
   test("resolves env var in apiKey", () => {
     process.env.MY_SECRET = "resolved-key";
     const cfg = configSchema.parse({ apiKey: "${MY_SECRET}" });
@@ -171,78 +183,391 @@ describe("configSchema.parse", () => {
 });
 
 // ============================================================================
-// Helper Functions
+// sanitizeSkillName
 // ============================================================================
 
-describe("truncateByTokenEstimate", () => {
-  test("returns short text unchanged", () => {
-    expect(truncateByTokenEstimate("hello", 100)).toBe("hello");
+describe("sanitizeSkillName", () => {
+  test("lowercases and replaces spaces with hyphens", () => {
+    expect(sanitizeSkillName("My Cool Skill")).toBe("my-cool-skill");
   });
 
-  test("truncates long text", () => {
-    const long = "a".repeat(10000);
-    const result = truncateByTokenEstimate(long, 10); // 10 tokens * 3 = 30 chars
-    expect(result.length).toBeLessThan(100);
-    expect(result).toContain("... (truncated)");
+  test("preserves underscores and hyphens", () => {
+    expect(sanitizeSkillName("skill_v2-beta")).toBe("skill_v2-beta");
   });
 
-  test("handles empty string", () => {
-    expect(truncateByTokenEstimate("", 100)).toBe("");
+  test("trims whitespace", () => {
+    expect(sanitizeSkillName("  spaces  ")).toBe("spaces");
   });
 
-  test("boundary: exactly at limit", () => {
-    const text = "a".repeat(300); // 100 tokens * 3 = 300 chars
-    const result = truncateByTokenEstimate(text, 100);
-    expect(result).toBe(text); // exactly at limit, no truncation
+  test("collapses consecutive special characters into single hyphen", () => {
+    expect(sanitizeSkillName("hello...world")).toBe("hello-world");
   });
 
-  test("boundary: one char over limit", () => {
-    const text = "a".repeat(301);
-    const result = truncateByTokenEstimate(text, 100);
-    expect(result).toContain("... (truncated)");
+  test("strips leading and trailing hyphens after sanitization", () => {
+    expect(sanitizeSkillName("--valid--")).toBe("valid");
+  });
+
+  test("throws on all-special-characters name", () => {
+    expect(() => sanitizeSkillName("@#$")).toThrow("Cannot sanitize skill name");
+  });
+
+  test("throws on empty string", () => {
+    expect(() => sanitizeSkillName("")).toThrow("Cannot sanitize skill name");
+  });
+
+  test("throws on whitespace-only string", () => {
+    expect(() => sanitizeSkillName("   ")).toThrow("Cannot sanitize skill name");
+  });
+
+  test("throws on hyphens-only string (stripped by trailing cleanup)", () => {
+    expect(() => sanitizeSkillName("---")).toThrow("Cannot sanitize skill name");
+  });
+
+  test("handles non-ascii unicode by replacing with hyphens", () => {
+    expect(sanitizeSkillName("\u2603\u2764-test")).toBe("test");
+  });
+
+  test("handles mixed non-ascii and latin", () => {
+    expect(sanitizeSkillName("abc \u2603 xyz")).toBe("abc-xyz");
   });
 });
 
-describe("stripInjectedContext", () => {
-  test("strips acontext-context block", () => {
-    const input =
-      "<acontext-context>\nSkill content here\n</acontext-context>\n\nActual user message";
-    expect(stripInjectedContext(input)).toBe("Actual user message");
+// ============================================================================
+// AcontextBridge — sync, download, path traversal
+// ============================================================================
+
+describe("AcontextBridge", () => {
+  let tmpDir: string;
+  let dataDir: string;
+  let skillsDir: string;
+  let mockLogger: BridgeLogger;
+  let loggedWarnings: string[];
+
+  const baseCfg: AcontextConfig = {
+    apiKey: "sk-ac-test",
+    baseUrl: "http://localhost:3000",
+    userId: "testuser",
+    skillsDir: "",
+    autoCapture: true,
+    autoLearn: true,
+    minTurnsForLearn: 4,
+  };
+
+  function createMockClient(overrides?: {
+    listSkills?: () => Promise<any[]>;
+    getFile?: (opts: any) => Promise<any>;
+  }) {
+    return {
+      sessions: {
+        list: jest.fn<any>().mockResolvedValue({ items: [], has_more: false }),
+        create: jest.fn<any>().mockResolvedValue({ id: "mock-session" }),
+        storeMessage: jest.fn<any>().mockResolvedValue({}),
+        flush: jest.fn<any>().mockResolvedValue({ status: 0, errmsg: "" }),
+        messagesObservingStatus: jest.fn<any>().mockResolvedValue({ observed: 0, in_process: 0, pending: 0 }),
+        getSessionSummary: jest.fn<any>().mockResolvedValue(""),
+      },
+      learningSpaces: {
+        list: jest.fn<any>().mockResolvedValue({ items: [{ id: "space-1" }], has_more: false }),
+        create: jest.fn<any>().mockResolvedValue({ id: "space-1" }),
+        listSkills: overrides?.listSkills
+          ? jest.fn<any>().mockImplementation(overrides.listSkills)
+          : jest.fn<any>().mockResolvedValue([]),
+        learn: jest.fn<any>().mockResolvedValue({ id: "learn-1" }),
+      },
+      skills: {
+        getFile: overrides?.getFile
+          ? jest.fn<any>().mockImplementation(overrides.getFile)
+          : jest.fn<any>().mockResolvedValue({ content: { type: "text", raw: "# Skill content" }, url: null }),
+      },
+      artifacts: {
+        grepArtifacts: jest.fn<any>().mockResolvedValue([]),
+      },
+    };
+  }
+
+  function createBridge(mockClient: ReturnType<typeof createMockClient>): AcontextBridge {
+    const cfg = { ...baseCfg, skillsDir };
+    const bridge = new AcontextBridge(cfg, dataDir, skillsDir, mockLogger);
+    (bridge as any).client = mockClient;
+    (bridge as any).initPromise = Promise.resolve();
+    (bridge as any).learningSpaceId = "space-1";
+    return bridge;
+  }
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-test-"));
+    dataDir = path.join(tmpDir, "data");
+    skillsDir = path.join(tmpDir, "skills");
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.mkdir(skillsDir, { recursive: true });
+    loggedWarnings = [];
+    mockLogger = {
+      info: jest.fn(),
+      warn: jest.fn((...args: unknown[]) => { loggedWarnings.push(String(args[0])); }),
+    };
   });
 
-  test("strips multiline context block", () => {
-    const input = `<acontext-context>
-<acontext-skills>
-### coding-prefs: prefs.md
-Use TypeScript
-</acontext-skills>
-
-<acontext-tasks>
-<session id="abc">
-<task id="1" description="Build API">
-</task>
-</session>
-</acontext-tasks>
-</acontext-context>
-
-Tell me about React`;
-    expect(stripInjectedContext(input)).toBe("Tell me about React");
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  test("returns unchanged text if no context block", () => {
-    const input = "Just a normal message";
-    expect(stripInjectedContext(input)).toBe("Just a normal message");
+  describe("syncSkillsToLocal", () => {
+    test("downloads new skills and writes to skillsDir", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "My Skill", description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+
+      const skills = await bridge.syncSkillsToLocal();
+      expect(skills).toHaveLength(1);
+      expect(skills[0].name).toBe("My Skill");
+
+      const content = await fs.readFile(path.join(skillsDir, "my-skill", "SKILL.md"), "utf-8");
+      expect(content).toBe("# Skill content");
+    });
+
+    test("skips unchanged skills (incremental sync)", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "cached-skill", description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+      expect(mockClient.skills.getFile).toHaveBeenCalledTimes(1);
+
+      mockClient.skills.getFile.mockClear();
+      await bridge.syncSkillsToLocal();
+      expect(mockClient.skills.getFile).toHaveBeenCalledTimes(0);
+    });
+
+    test("re-downloads skills when updatedAt changes", async () => {
+      let updatedAt = "2026-01-01T00:00:00Z";
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "evolving-skill", description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: updatedAt,
+        }],
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+      expect(mockClient.skills.getFile).toHaveBeenCalledTimes(1);
+
+      mockClient.skills.getFile.mockClear();
+      updatedAt = "2026-02-01T00:00:00Z";
+      (bridge as any).skillsMetadata = null;
+      (bridge as any).skillsSynced = false;
+      await bridge.syncSkillsToLocal();
+      expect(mockClient.skills.getFile).toHaveBeenCalledTimes(1);
+    });
+
+    test("removes deleted skills from disk", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "will-delete", description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+      await bridge.syncSkillsToLocal();
+
+      const skillPath = path.join(skillsDir, "will-delete", "SKILL.md");
+      await expect(fs.access(skillPath)).resolves.toBeUndefined();
+
+      // Now remote returns empty — skill deleted server-side
+      mockClient.learningSpaces.listSkills.mockResolvedValue([]);
+      (bridge as any).skillsMetadata = null;
+      (bridge as any).skillsSynced = false;
+      await bridge.syncSkillsToLocal();
+
+      await expect(fs.access(skillPath)).rejects.toThrow();
+    });
+
+    test("handles skill rename (removes old dir, creates new dir)", async () => {
+      let skillName = "old-name";
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: skillName, description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: skillName === "old-name" ? "2026-01-01T00:00:00Z" : "2026-02-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+      await bridge.syncSkillsToLocal();
+
+      await expect(fs.access(path.join(skillsDir, "old-name", "SKILL.md"))).resolves.toBeUndefined();
+
+      // Rename
+      skillName = "new-name";
+      (bridge as any).skillsMetadata = null;
+      (bridge as any).skillsSynced = false;
+      await bridge.syncSkillsToLocal();
+
+      await expect(fs.access(path.join(skillsDir, "new-name", "SKILL.md"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(skillsDir, "old-name"))).rejects.toThrow();
+    });
+
+    test("cleans stale files when skill content updates in-place", async () => {
+      let fileIndex = [
+        { path: "guide.md", mime: "text/markdown" },
+        { path: "faq.md", mime: "text/markdown" },
+      ];
+      let updatedAt = "2026-01-01T00:00:00Z";
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "my-skill", description: "desc",
+          disk_id: "d1", file_index: fileIndex, updated_at: updatedAt,
+        }],
+      });
+      const bridge = createBridge(mockClient);
+      await bridge.syncSkillsToLocal();
+
+      await expect(fs.access(path.join(skillsDir, "my-skill", "guide.md"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(skillsDir, "my-skill", "faq.md"))).resolves.toBeUndefined();
+
+      // v2: faq.md removed
+      fileIndex = [{ path: "guide.md", mime: "text/markdown" }];
+      updatedAt = "2026-02-01T00:00:00Z";
+      (bridge as any).skillsMetadata = null;
+      (bridge as any).skillsSynced = false;
+      await bridge.syncSkillsToLocal();
+
+      await expect(fs.access(path.join(skillsDir, "my-skill", "guide.md"))).resolves.toBeUndefined();
+      await expect(fs.access(path.join(skillsDir, "my-skill", "faq.md"))).rejects.toThrow();
+    });
   });
 
-  test("returns empty string if only context", () => {
-    const input = "<acontext-context>stuff</acontext-context>";
-    expect(stripInjectedContext(input)).toBe("");
+  describe("downloadSkillFiles — path traversal", () => {
+    test("rejects path traversal attempts", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "evil-skill", description: "desc",
+          disk_id: "d1",
+          file_index: [{ path: "../../etc/passwd.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+      await bridge.syncSkillsToLocal();
+
+      expect(mockClient.skills.getFile).not.toHaveBeenCalled();
+      expect(loggedWarnings.some((w) => w.includes("path traversal"))).toBe(true);
+    });
+
+    test("accepts normal nested paths", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "good-skill", description: "desc",
+          disk_id: "d1",
+          file_index: [{ path: "docs/guide.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+      await bridge.syncSkillsToLocal();
+
+      expect(mockClient.skills.getFile).toHaveBeenCalledTimes(1);
+      const content = await fs.readFile(path.join(skillsDir, "good-skill", "docs", "guide.md"), "utf-8");
+      expect(content).toBe("# Skill content");
+    });
   });
 
-  test("handles multiple context blocks", () => {
-    const input =
-      "<acontext-context>a</acontext-context> middle <acontext-context>b</acontext-context> end";
-    expect(stripInjectedContext(input)).toBe("middle end");
+  describe("listSkills — manifest caching", () => {
+    test("returns cached skills without re-syncing", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "cached", description: "desc",
+          disk_id: "d1", file_index: [], updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+      expect(mockClient.learningSpaces.listSkills).toHaveBeenCalledTimes(1);
+
+      const skills = await bridge.listSkills();
+      expect(skills).toHaveLength(1);
+      expect(mockClient.learningSpaces.listSkills).toHaveBeenCalledTimes(1);
+    });
+
+    test("re-syncs after invalidateSkillCaches + stale manifest", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "cached", description: "desc",
+          disk_id: "d1", file_index: [], updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+      bridge.invalidateSkillCaches();
+
+      // Manually make manifest stale by setting syncedAt to past
+      const manifestPath = path.join(dataDir, ".manifest.json");
+      const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
+      manifest.syncedAt = Date.now() - 60 * 60 * 1000;
+      await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf-8");
+
+      await bridge.listSkills();
+      expect(mockClient.learningSpaces.listSkills).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("syncSkillsToLocal — concurrent deduplication", () => {
+    test("deduplicates concurrent sync calls into one API request", async () => {
+      let resolveListSkills!: (value: any[]) => void;
+      const listSkillsPromise = new Promise<any[]>((resolve) => {
+        resolveListSkills = resolve;
+      });
+      const mockClient = createMockClient({
+        listSkills: () => listSkillsPromise,
+      });
+      const bridge = createBridge(mockClient);
+
+      const p1 = bridge.syncSkillsToLocal();
+      const p2 = bridge.syncSkillsToLocal();
+      const p3 = bridge.syncSkillsToLocal();
+
+      resolveListSkills([{
+        id: "s1", name: "skill-a", description: "desc",
+        disk_id: "d1", file_index: [], updated_at: "2026-01-01T00:00:00Z",
+      }]);
+
+      const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+
+      expect(mockClient.learningSpaces.listSkills).toHaveBeenCalledTimes(1);
+      expect(r1).toBe(r2);
+      expect(r2).toBe(r3);
+      expect(r1).toHaveLength(1);
+    });
+
+    test("allows a new sync after the previous one completes", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "skill-a", description: "desc",
+          disk_id: "d1", file_index: [], updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+      expect(mockClient.learningSpaces.listSkills).toHaveBeenCalledTimes(1);
+
+      (bridge as any).skillsMetadata = null;
+      (bridge as any).skillsSynced = false;
+      await bridge.syncSkillsToLocal();
+      expect(mockClient.learningSpaces.listSkills).toHaveBeenCalledTimes(2);
+    });
   });
 });
 
@@ -284,7 +609,6 @@ describe("plugin registration", () => {
   }
 
   test("registers all tools, hooks, CLI, and service", async () => {
-    // Dynamic import to get the plugin with mocked deps
     const { default: plugin } = await import("../index");
 
     const { api, hooks, tools, cliHandlers, getService } = createMockApi({
@@ -293,15 +617,15 @@ describe("plugin registration", () => {
 
     plugin.register(api as any);
 
-    // 4 tools registered
-    expect(api.registerTool).toHaveBeenCalledTimes(4);
+    // 3 tools registered (acontext_read_skill removed)
+    expect(api.registerTool).toHaveBeenCalledTimes(3);
     const toolNames = tools.map((t) => t.name);
     expect(toolNames).toContain("acontext_search_skills");
-    expect(toolNames).toContain("acontext_read_skill");
     expect(toolNames).toContain("acontext_session_history");
     expect(toolNames).toContain("acontext_learn_now");
+    expect(toolNames).not.toContain("acontext_read_skill");
 
-    // Hooks registered (autoRecall + autoCapture both default true)
+    // before_agent_start for skill sync check + agent_end for capture
     expect(hooks["before_agent_start"]).toHaveLength(1);
     expect(hooks["agent_end"]).toHaveLength(1);
 
@@ -311,21 +635,6 @@ describe("plugin registration", () => {
     // Service registered
     expect(api.registerService).toHaveBeenCalledTimes(1);
     expect(getService()!.id).toBe("acontext");
-  });
-
-  test("skips recall hook when autoRecall=false", async () => {
-    const { default: plugin } = await import("../index");
-
-    const { api, hooks } = createMockApi({
-      apiKey: "sk-ac-test",
-      autoRecall: false,
-    });
-
-    plugin.register(api as any);
-
-    expect(hooks["before_agent_start"]).toBeUndefined();
-    // capture hook still present
-    expect(hooks["agent_end"]).toHaveLength(1);
   });
 
   test("skips capture hook when autoCapture=false", async () => {
@@ -338,23 +647,9 @@ describe("plugin registration", () => {
 
     plugin.register(api as any);
 
-    // recall hook still present
+    // before_agent_start always registered (for skill sync)
     expect(hooks["before_agent_start"]).toHaveLength(1);
-    expect(hooks["agent_end"]).toBeUndefined();
-  });
-
-  test("skips both hooks when both disabled", async () => {
-    const { default: plugin } = await import("../index");
-
-    const { api, hooks } = createMockApi({
-      apiKey: "sk-ac-test",
-      autoRecall: false,
-      autoCapture: false,
-    });
-
-    plugin.register(api as any);
-
-    expect(hooks["before_agent_start"]).toBeUndefined();
+    // agent_end not registered when autoCapture=false
     expect(hooks["agent_end"]).toBeUndefined();
   });
 
@@ -375,10 +670,10 @@ describe("plugin registration", () => {
 });
 
 // ============================================================================
-// Auto-Recall Hook Behavior
+// Before-Agent-Start Hook Behavior (skill sync check)
 // ============================================================================
 
-describe("auto-recall hook", () => {
+describe("before_agent_start hook", () => {
   function createMockApi(pluginConfig: unknown) {
     const hooks: Record<string, Function[]> = {};
     const api = {
@@ -396,25 +691,15 @@ describe("auto-recall hook", () => {
     return { api, hooks };
   }
 
-  test("skips recall when prompt is too short", async () => {
+  test("does not return prependContext (no injection)", async () => {
     const { default: plugin } = await import("../index");
     const { api, hooks } = createMockApi({ apiKey: "sk-ac-test" });
 
     plugin.register(api as any);
 
-    const recallHook = hooks["before_agent_start"][0];
-    const result = await recallHook({ prompt: "hi" }, {});
-    expect(result).toBeUndefined();
-  });
-
-  test("skips recall when prompt is empty", async () => {
-    const { default: plugin } = await import("../index");
-    const { api, hooks } = createMockApi({ apiKey: "sk-ac-test" });
-
-    plugin.register(api as any);
-
-    const recallHook = hooks["before_agent_start"][0];
-    const result = await recallHook({ prompt: "" }, {});
+    const hook = hooks["before_agent_start"][0];
+    const result = await hook({ prompt: "Tell me about my previous work" }, {});
+    // Should not return prependContext — skills are loaded natively by OpenClaw
     expect(result).toBeUndefined();
   });
 
@@ -424,13 +709,11 @@ describe("auto-recall hook", () => {
 
     plugin.register(api as any);
 
-    const recallHook = hooks["before_agent_start"][0];
-    // This will fail internally because mock SDK throws, but should not throw
-    const result = await recallHook(
+    const hook = hooks["before_agent_start"][0];
+    const result = await hook(
       { prompt: "Tell me about my previous work" },
       {},
     );
-    // Should either return undefined (no context) or an object — never throw
     expect(result === undefined || typeof result === "object").toBe(true);
   });
 });
@@ -493,44 +776,19 @@ describe("auto-capture hook", () => {
     expect(result).toBeUndefined();
   });
 
-  test("processes messages with injected context stripped", async () => {
+  test("stores messages without stripping context", async () => {
     const { default: plugin } = await import("../index");
     const { api, hooks } = createMockApi({ apiKey: "sk-ac-test" });
 
     plugin.register(api as any);
 
     const captureHook = hooks["agent_end"][0];
-    // Capture with messages containing injected context
     const result = await captureHook(
       {
         success: true,
         messages: [
-          {
-            role: "user",
-            content:
-              "<acontext-context>\nskill data\n</acontext-context>\n\nActual question",
-          },
+          { role: "user", content: "Actual question" },
           { role: "assistant", content: "Here is my answer" },
-        ],
-      },
-      { sessionKey: "test-session-key" },
-    );
-    // Should not throw regardless of outcome
-    expect(result).toBeUndefined();
-  });
-
-  test("skips messages with only injected context (no real content)", async () => {
-    const { default: plugin } = await import("../index");
-    const { api, hooks } = createMockApi({ apiKey: "sk-ac-test" });
-
-    plugin.register(api as any);
-
-    const captureHook = hooks["agent_end"][0];
-    const result = await captureHook(
-      {
-        success: true,
-        messages: [
-          { role: "user", content: "<acontext-context>only context</acontext-context>" },
         ],
       },
       { sessionKey: "test-session-key" },
