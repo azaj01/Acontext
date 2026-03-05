@@ -52,6 +52,6 @@ When releasing a new version of an SDK, follow these steps in order:
    - Python SDK: run `uv lock` in `src/client/acontext-py/` (updates `uv.lock`)
    - OpenClaw Plugin: run `npm install` in `src/packages/openclaw/` (updates `package-lock.json`)
 3. **Commit** the version bump + lock file changes.
-4. **Tag** the commit using the convention `sdk-ts/vX.Y.Z`, `sdk-py/vX.Y.Z`, or `openclaw/vX.Y.Z`.
+4. **Tag** the commit using the convention `sdk-ts/vX.Y.Z`, `sdk-py/vX.Y.Z`, or `package-openclaw/vX.Y.Z`.
 ### Unit Test
 - Always delete the new project you created in the same test
