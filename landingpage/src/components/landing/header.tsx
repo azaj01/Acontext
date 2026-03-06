@@ -9,6 +9,7 @@ import {
   ArrowUpRight,
   FileText,
   BookOpen,
+  MessageCircle,
   MessageSquare,
   Package,
   LayoutDashboard,
@@ -184,7 +185,7 @@ export function Header() {
       <div className="w-full max-w-[1400px] lg:max-w-[1200px] md:max-w-[768px] mx-auto">
         <div className="flex items-center justify-between h-16 px-4 md:px-1">
           {/* Logo + Navigation (left-aligned) */}
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4 lg:gap-6">
             <Link
               href="/"
               className="flex items-center hover:opacity-80 transition-opacity"
@@ -199,7 +200,7 @@ export function Header() {
             </Link>
 
             {/* Navigation - left aligned next to logo */}
-            <nav className="hidden md:flex items-center gap-6">
+            <nav className="hidden md:flex items-center gap-4 lg:gap-6">
               <div
                 className="relative"
                 onMouseEnter={handleProductMouseEnter}
@@ -703,16 +704,17 @@ export function Header() {
           </div>
 
           {/* Right side buttons */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 lg:gap-3">
             <a
               href="https://cal.com/acontext/30min"
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden md:flex items-center gap-0.5 text-sm font-medium text-muted-foreground relative transition-all duration-200 hover:text-foreground after:content-[''] after:absolute after:bottom-[-2px] after:left-0 after:w-0 after:h-px after:bg-foreground after:transition-all after:duration-200 hover:after:w-full"
+              className="flex items-center gap-0.5 text-sm font-medium text-muted-foreground relative transition-all duration-200 hover:text-foreground after:content-[''] after:absolute after:bottom-[-2px] after:left-0 after:w-0 after:h-px after:bg-foreground after:transition-all after:duration-200 hover:after:w-full"
               aria-label="Talk to Founder (opens in new tab)"
             >
-              Talk to Founder
-              <ArrowUpRight className="h-4 w-4" />
+              <span className="hidden lg:inline">Talk to Founder</span>
+              <MessageCircle className="h-4 w-4 shrink-0 lg:hidden" aria-hidden />
+              <ArrowUpRight className="h-4 w-4 shrink-0 hidden lg:block" aria-hidden />
             </a>
             <ThemeToggle />
             <Button variant="ghost" size="sm" asChild className="gap-1.5 px-2.5">
