@@ -27,27 +27,27 @@
 
 ## What is Acontext?
 
-Acontext is an open-source Agent Skills as a Memory Layer: skill memory that **automatically** captures learnings from agent runs and stores knowledge as **Markdown files**. You can read, edit, and share those files across agents, LLMs and frameworks.
+Acontext is an open-source skill memory layer for AI agents. It **automatically** captures learnings from agent runs and stores them as **Markdown files** — files you can read, edit, and share across agents, LLMs, and frameworks.
 
-If you don't want the agent you build **repeat the same mistakes** or **fail to reuse what worked** — and you hate the opaque memory to pollute your context, give Acontext a try.
+If you want the agent you build to **learn from its mistakes** and **reuse what worked** — without opaque memory polluting your context — give Acontext a try.
 
-## Why?
+## Skill is All You Need
 
-People are building more and more complicated Agent Memory, making it **difficult to understand, debug and let the users to fix**. If agent skills can handle every knowledge agent needs with simple files, so as the memory. 
+Agent memory is getting increasingly complicated🤢 — hard to understand, hard to debug, and hard for users to inspect or correct. Acontext takes a different approach: if agent skills can represent every piece of knowledge an agent needs as simple files, so can the memory.
 
-- Acontext try to build the memory upon agent skills format, so that everyone can actually understand what's the whole memory looks like. 
-- Skill is Memory, Memory is Skill. No matter the skill is coming from the one your download from Clawhub, or the one you made up yourself, Acontext can follow the skills and evolve them accordingly.
+- **Acontext builds memory in the agent skills format**, so everyone can see and understand what the memory actually contains.
+- **Skill is Memory, Memory is Skill**. Whether a skill comes from one you downloaded from Clawhub or one you created yourself, Acontext can follow it and evolve it over time.
 
-## What Acontext Provides
+## The Philosophy of Acontext
 
 - **Plain file, any framework** — Skill memories are Markdown files. Use them with LangGraph, Claude, AI SDK, or anything that reads files. No embeddings, no API lock-in. Git, grep, and mount to the sandbox.
-- **You design the structure** — Attach more skills to the learning space, you can define how the schema, naming, and file layout of the memory. For example: one file per contact, per project for the user working context skill.
-- **Progressive disclosure, not search** — The agent uses `get_skill` and `get_skill_file` to fetch what it needs. Retrieval is by tool use and reasoning, not semantic top-k. Full units (e.g. whole files), not chunked fragments.
+- **You design the structure** — Attach more skills to define the schema, naming, and file layout of the memory. For example: one file per contact, one per project by uploading a working context skill.
+- **Progressive disclosure, not search** — The agent can use  `get_skill` and `get_skill_file` to fetch what it needs. Retrieval is by tool use and reasoning, not semantic top-k.
 - **Download as ZIP, reuse anywhere** — Export skill files as ZIP. Run locally, in another agent, or with another LLM. No vendor lock-in; no re-embedding or migration step.
 
 ## How It Works
 
-### Store — How skills get written
+### Store — How skills get memorized?
 
 ```mermaid
 flowchart LR
@@ -97,7 +97,7 @@ Give your agent **Skill Content Tools** (`get_skill`, `get_skill_file`). The age
 <details>
 <summary>💻 Self-host Acontext</summary>
 
-We have an `acontext-cli` to help you do quick proof-of-concept. Download it first in your terminal:
+We have an `acontext-cli` to help you do a quick proof-of-concept. Download it first in your terminal:
 
 ```bash
 curl -fsSL https://install.acontext.io | sh
@@ -112,7 +112,7 @@ acontext server up
 
 > Make sure your LLM has the ability to [call tools](https://platform.openai.com/docs/guides/function-calling). By default, Acontext will use `gpt-4.1`.
 
-`acontext server up` will create/use  `.env` and `config.yaml` for Acontext, and create a `db` folder to persist data.
+`acontext server up` will create/use `.env` and `config.yaml` for Acontext, and create a `db` folder to persist data.
 
 
 
@@ -197,7 +197,7 @@ for skill in skills:
 
 
 
-# 🧐 Use Acontext to build Agent
+# 🧐 Use Acontext to Build Agents
 
 Download end-to-end scripts with `acontext`:
 
@@ -239,7 +239,7 @@ More examples on Typescript:
 
 
 
-# 🔍 Document
+# 🔍 Documentation
 
 To learn more about skill memory and what Acontext can do, visit [our docs](https://docs.acontext.io/) or start with [What is Skill Memory?](https://docs.acontext.io/learn/quick)
 
@@ -247,7 +247,7 @@ To learn more about skill memory and what Acontext can do, visit [our docs](http
 
 # ❤️ Stay Updated
 
-Star Acontext on Github to support and receive instant notifications 
+Star Acontext on GitHub to support us and receive instant notifications.
 
 ![click_star](./assets/star_acontext.gif)
 
