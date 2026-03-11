@@ -40,7 +40,6 @@ interface AcontextClientLike {
     create(options?: Record<string, unknown>): Promise<{ id: string }>;
     storeMessage(sessionId: string, blob: Record<string, unknown>, options?: Record<string, unknown>): Promise<{ id: string }>;
     flush(sessionId: string): Promise<{ status: number; errmsg: string }>;
-    messagesObservingStatus(sessionId: string): Promise<{ observed: number; in_process: number; pending: number }>;
     getSessionSummary(sessionId: string, options?: Record<string, unknown>): Promise<string>;
   };
   learningSpaces: {
@@ -71,8 +70,11 @@ interface AcontextClientLike {
 export function resolveEnvVars(value: string): string {
   return value.replace(/\$\{([^}]+)\}/g, (_, envVar) => {
     const envValue = process.env[envVar];
-    if (!envValue) {
+    if (envValue === undefined) {
       throw new Error(`Environment variable ${envVar} is not set`);
+    }
+    if (envValue === "") {
+      throw new Error(`Environment variable ${envVar} is set but empty`);
     }
     return envValue;
   });
@@ -192,11 +194,30 @@ export function sanitizeSkillName(name: string): string {
   return sanitized;
 }
 
+/**
+ * Write a file atomically: write to a .tmp sibling then rename into place.
+ * Prevents corruption if the process crashes mid-write.
+ */
+let atomicWriteCounter = 0;
+export async function atomicWriteFile(filePath: string, data: string): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tmpPath = filePath + `.tmp.${process.pid}.${Date.now()}.${atomicWriteCounter++}`;
+  await fs.writeFile(tmpPath, data, "utf-8");
+  try {
+    await fs.rename(tmpPath, filePath);
+  } catch (err) {
+    await fs.unlink(tmpPath).catch(() => {});
+    throw err;
+  }
+}
+
 export class AcontextBridge {
   private client: AcontextClientLike | null = null;
   private initPromise: Promise<void> | null = null;
   private sessionMap = new Map<string, string>();
+  private sessionPromises = new Map<string, Promise<string>>();
   private learningSpaceId: string | null = null;
+  private learningSpacePromise: Promise<string> | null = null;
   private logger: BridgeLogger;
   private dataDir: string;
   private skillsDir: string;
@@ -206,9 +227,13 @@ export class AcontextBridge {
   private syncInProgress: Promise<SkillMeta[]> | null = null;
   private learnedSessions = new Set<string>();
   private learnedSessionsLoaded = false;
+  private learnedSessionsLoadPromise: Promise<void> | null = null;
   private sentMessages = new Map<string, Map<string, string>>();
   private sentMessagesLoaded = false;
+  private sentMessagesLoadPromise: Promise<void> | null = null;
   private static MANIFEST_STALE_MS = 30 * 60 * 1000; // 30 minutes
+  static MAX_SENT_SESSIONS = 100;
+  static MAX_LEARNED_SESSIONS = 500;
 
   constructor(private readonly cfg: AcontextConfig, dataDir: string, skillsDir: string, logger?: BridgeLogger) {
     this.dataDir = dataDir;
@@ -232,17 +257,24 @@ export class AcontextBridge {
       const raw = await fs.readFile(this.learnedSessionsPath(), "utf-8");
       const ids = JSON.parse(raw) as string[];
       for (const id of ids) this.learnedSessions.add(id);
-    } catch {
-      // file doesn't exist yet — that's fine
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        this.logger.warn(`acontext: failed to load learned-sessions state: ${String(err)}`);
+      }
     }
   }
 
   private async persistLearnedSessions(): Promise<void> {
+    // Evict oldest entries if over cap
+    if (this.learnedSessions.size > AcontextBridge.MAX_LEARNED_SESSIONS) {
+      const arr = [...this.learnedSessions];
+      const toKeep = arr.slice(arr.length - AcontextBridge.MAX_LEARNED_SESSIONS);
+      this.learnedSessions = new Set(toKeep);
+    }
     await fs.mkdir(this.dataDir, { recursive: true });
-    await fs.writeFile(
+    await atomicWriteFile(
       this.learnedSessionsPath(),
       JSON.stringify([...this.learnedSessions]),
-      "utf-8",
     );
   }
 
@@ -257,18 +289,28 @@ export class AcontextBridge {
       for (const [sessionId, hashes] of Object.entries(data)) {
         this.sentMessages.set(sessionId, new Map(Object.entries(hashes)));
       }
-    } catch {
-      // file doesn't exist yet — that's fine
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        this.logger.warn(`acontext: failed to load sent-messages state: ${String(err)}`);
+      }
     }
   }
 
   private async persistSentMessages(): Promise<void> {
+    // Evict oldest sessions if over cap (Map preserves insertion order)
+    if (this.sentMessages.size > AcontextBridge.MAX_SENT_SESSIONS) {
+      const keys = [...this.sentMessages.keys()];
+      const toRemove = keys.slice(0, keys.length - AcontextBridge.MAX_SENT_SESSIONS);
+      for (const key of toRemove) {
+        this.sentMessages.delete(key);
+      }
+    }
     await fs.mkdir(this.dataDir, { recursive: true });
     const data: Record<string, Record<string, string>> = {};
     for (const [sessionId, hashes] of this.sentMessages) {
       data[sessionId] = Object.fromEntries(hashes);
     }
-    await fs.writeFile(this.sentMessagesPath(), JSON.stringify(data), "utf-8");
+    await atomicWriteFile(this.sentMessagesPath(), JSON.stringify(data));
   }
 
   static computeMessageHash(index: number, blob: Record<string, unknown>): string {
@@ -296,21 +338,23 @@ export class AcontextBridge {
   private async writeManifest(skills: SkillMeta[]): Promise<void> {
     await fs.mkdir(this.dataDir, { recursive: true });
     const manifest: SkillManifest = { syncedAt: Date.now(), skills };
-    await fs.writeFile(this.manifestPath(), JSON.stringify(manifest), "utf-8");
+    await atomicWriteFile(this.manifestPath(), JSON.stringify(manifest));
   }
 
   /**
    * Download .md files for a single skill to OpenClaw's native skill directory.
    */
-  private async downloadSkillFiles(skill: SkillMeta): Promise<void> {
+  private async downloadSkillFiles(skill: SkillMeta): Promise<boolean> {
     const client = await this.ensureClient();
     const dir = this.skillDir(skill.name);
+    let allSucceeded = true;
 
     for (const fi of skill.fileIndex) {
       if (!fi.path.endsWith(".md")) continue;
 
       const fileDest = path.resolve(dir, fi.path);
-      if (!fileDest.startsWith(dir + path.sep)) {
+      const rel = path.relative(dir, fileDest);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
         this.logger.warn(`acontext: skipping file with path traversal: ${fi.path} (skill: ${skill.name})`);
         continue;
       }
@@ -323,15 +367,25 @@ export class AcontextBridge {
           expire: 60,
         });
         if (resp.content) {
-          await fs.writeFile(fileDest, resp.content.raw, "utf-8");
+          if (resp.content.type === "base64") {
+            await fs.writeFile(fileDest, Buffer.from(resp.content.raw, "base64"));
+          } else {
+            await fs.writeFile(fileDest, resp.content.raw, "utf-8");
+          }
         } else if (resp.url) {
           const res = await fetch(resp.url);
-          if (res.ok) await fs.writeFile(fileDest, await res.text(), "utf-8");
+          if (res.ok) {
+            await fs.writeFile(fileDest, Buffer.from(await res.arrayBuffer()));
+          } else {
+            allSucceeded = false;
+          }
         }
       } catch (err) {
         this.logger.warn(`acontext: download failed for ${skill.id}:${fi.path}: ${String(err)}`);
+        allSucceeded = false;
       }
     }
+    return allSucceeded;
   }
 
   /**
@@ -371,10 +425,34 @@ export class AcontextBridge {
     }
 
     const remoteIds = new Set<string>();
+    const failedSkillIds = new Set<string>();
+    const sanitizedNames = new Map<string, string[]>(); // sanitized-name → skill-ids
     let downloadCount = 0;
 
+    const collidingSkillIds = new Set<string>();
+
+    // Pass 1: detect all sanitized name collisions before downloading anything
     for (const skill of remoteSkills) {
+      const sName = sanitizeSkillName(skill.name);
+      const existing = sanitizedNames.get(sName);
+      if (existing) {
+        existing.push(skill.id);
+      } else {
+        sanitizedNames.set(sName, [skill.id]);
+      }
+    }
+    for (const [sName, ids] of sanitizedNames) {
+      if (ids.length > 1) {
+        this.logger.warn(`acontext: sanitized name collision — ${ids.length} skills collide as "${sName}", skipping all: ${ids.join(", ")}`);
+        for (const id of ids) collidingSkillIds.add(id);
+      }
+    }
+
+    // Pass 2: download non-colliding skills
+    for (const skill of remoteSkills) {
+      if (collidingSkillIds.has(skill.id)) continue;
       remoteIds.add(skill.id);
+
       const local = localMap.get(skill.id);
 
       if (!local || local.updatedAt !== skill.updatedAt) {
@@ -384,13 +462,25 @@ export class AcontextBridge {
         }
         const targetDir = this.skillDir(skill.name);
         await fs.rm(targetDir, { recursive: true, force: true }).catch(() => {});
-        await this.downloadSkillFiles(skill);
+        const success = await this.downloadSkillFiles(skill);
+        if (!success) {
+          failedSkillIds.add(skill.id);
+        }
         downloadCount++;
       }
     }
 
+    // Clean up disk directories for colliding skills that were previously synced
+    for (const cid of collidingSkillIds) {
+      const local = localMap.get(cid);
+      if (local) {
+        const dir = this.skillDir(local.name);
+        await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
     for (const [id, local] of localMap) {
-      if (!remoteIds.has(id)) {
+      if (!remoteIds.has(id) && !collidingSkillIds.has(id)) {
         const dir = this.skillDir(local.name);
         await fs.rm(dir, { recursive: true, force: true }).catch((err) => {
           this.logger.warn(`acontext: failed to remove deleted skill dir ${dir}: ${String(err)}`);
@@ -398,19 +488,33 @@ export class AcontextBridge {
       }
     }
 
-    await this.writeManifest(remoteSkills);
-    this.skillsMetadata = remoteSkills;
+    // Filter out colliding skills, then preserve old updatedAt for failed downloads
+    const nonCollidingSkills = remoteSkills.filter((s) => !collidingSkillIds.has(s.id));
+    const manifestSkills = nonCollidingSkills.map((skill) => {
+      if (failedSkillIds.has(skill.id)) {
+        const local = localMap.get(skill.id);
+        return { ...skill, updatedAt: local?.updatedAt ?? "" };
+      }
+      return skill;
+    });
+    await this.writeManifest(manifestSkills);
+    this.skillsMetadata = nonCollidingSkills;
     this.skillsSynced = true;
 
     if (downloadCount > 0) {
-      this.logger.info(`acontext: synced ${downloadCount} skill(s) to ${this.skillsDir} (${remoteSkills.length} total)`);
+      this.logger.info(`acontext: synced ${downloadCount} skill(s) to ${this.skillsDir} (${nonCollidingSkills.length} total)`);
     }
-    return remoteSkills;
+    return nonCollidingSkills;
   }
 
   private async ensureClient(): Promise<AcontextClientLike> {
     if (this.client) return this.client;
-    if (!this.initPromise) this.initPromise = this._init();
+    if (!this.initPromise) {
+      this.initPromise = this._init().catch((err) => {
+        this.initPromise = null;
+        throw err;
+      });
+    }
     await this.initPromise;
     return this.client!;
   }
@@ -424,27 +528,35 @@ export class AcontextBridge {
   }
 
   async ensureSession(openclawSessionKey: string): Promise<string> {
-    const client = await this.ensureClient();
-
     const cached = this.sessionMap.get(openclawSessionKey);
     if (cached) return cached;
 
-    try {
-      const existing = await client.sessions.list({
-        user: this.cfg.userId,
-        filterByConfigs: {
-          source: "openclaw",
-          openclaw_session_key: openclawSessionKey,
-        },
-        limit: 1,
-      });
-      if (existing.items.length > 0) {
-        const sid = existing.items[0].id;
-        this.sessionMap.set(openclawSessionKey, sid);
-        return sid;
-      }
-    } catch (err) {
-      this.logger.warn(`acontext: session lookup failed, creating new: ${String(err)}`);
+    const inflight = this.sessionPromises.get(openclawSessionKey);
+    if (inflight) return inflight;
+
+    const promise = this._createOrFindSession(openclawSessionKey).then(
+      (result) => { this.sessionPromises.delete(openclawSessionKey); return result; },
+      (err) => { this.sessionPromises.delete(openclawSessionKey); throw err; },
+    );
+    this.sessionPromises.set(openclawSessionKey, promise);
+    return promise;
+  }
+
+  private async _createOrFindSession(openclawSessionKey: string): Promise<string> {
+    const client = await this.ensureClient();
+
+    const existing = await client.sessions.list({
+      user: this.cfg.userId,
+      filterByConfigs: {
+        source: "openclaw",
+        openclaw_session_key: openclawSessionKey,
+      },
+      limit: 1,
+    });
+    if (existing.items.length > 0) {
+      const sid = existing.items[0].id;
+      this.sessionMap.set(openclawSessionKey, sid);
+      return sid;
     }
 
     const session = await client.sessions.create({
@@ -463,22 +575,28 @@ export class AcontextBridge {
   }
 
   async ensureLearningSpace(): Promise<string> {
-    const client = await this.ensureClient();
-
     if (this.learningSpaceId) return this.learningSpaceId;
 
-    try {
-      const existing = await client.learningSpaces.list({
-        user: this.cfg.userId,
-        filterByMeta: { source: "openclaw" },
-        limit: 1,
-      });
-      if (existing.items.length > 0) {
-        this.learningSpaceId = existing.items[0].id;
-        return this.learningSpaceId!;
-      }
-    } catch (err) {
-      this.logger.warn(`acontext: learning space lookup failed, creating new: ${String(err)}`);
+    if (this.learningSpacePromise) return this.learningSpacePromise;
+
+    this.learningSpacePromise = this._createOrFindLearningSpace().catch((err) => {
+      this.learningSpacePromise = null;
+      throw err;
+    });
+    return this.learningSpacePromise;
+  }
+
+  private async _createOrFindLearningSpace(): Promise<string> {
+    const client = await this.ensureClient();
+
+    const existing = await client.learningSpaces.list({
+      user: this.cfg.userId,
+      filterByMeta: { source: "openclaw" },
+      limit: 1,
+    });
+    if (existing.items.length > 0) {
+      this.learningSpaceId = existing.items[0].id;
+      return this.learningSpaceId!;
     }
 
     const space = await client.learningSpaces.create({
@@ -544,14 +662,18 @@ export class AcontextBridge {
 
       const parts: string[] = [];
       for (const session of sessions.items) {
-        const summary = await client.sessions.getSessionSummary(
-          session.id,
-          { limit: 20 },
-        );
-        if (summary) {
-          parts.push(
-            `<session id="${session.id}" created="${session.created_at}">\n${summary}\n</session>`,
+        try {
+          const summary = await client.sessions.getSessionSummary(
+            session.id,
+            { limit: 20 },
           );
+          if (summary) {
+            parts.push(
+              `<session id="${session.id}" created="${session.created_at}">\n${summary}\n</session>`,
+            );
+          }
+        } catch (err) {
+          this.logger.warn(`acontext: getSessionSummary failed for ${session.id}: ${String(err)}`);
         }
       }
       return parts.join("\n");
@@ -575,10 +697,18 @@ export class AcontextBridge {
     sessionId: string,
     blobs: Record<string, unknown>[],
     startIndex = 0,
-  ): Promise<number> {
+  ): Promise<{ stored: number; processed: number }> {
     if (!this.sentMessagesLoaded) {
-      await this.loadSentMessages();
-      this.sentMessagesLoaded = true;
+      if (!this.sentMessagesLoadPromise) {
+        this.sentMessagesLoadPromise = this.loadSentMessages().then(() => {
+          this.sentMessagesLoaded = true;
+          this.sentMessagesLoadPromise = null;
+        }).catch((err) => {
+          this.sentMessagesLoadPromise = null;
+          throw err;
+        });
+      }
+      await this.sentMessagesLoadPromise;
     }
 
     const client = await this.ensureClient();
@@ -589,12 +719,14 @@ export class AcontextBridge {
     }
 
     let stored = 0;
+    let processed = 0;
     for (let i = 0; i < blobs.length; i++) {
       const blob = blobs[i];
       const hash = AcontextBridge.computeMessageHash(startIndex + i, blob);
 
       if (sessionSent.has(hash)) {
         this.logger.info(`acontext: skipping duplicate message ${hash}`);
+        processed++;
         continue;
       }
 
@@ -602,6 +734,7 @@ export class AcontextBridge {
         const result = await client.sessions.storeMessage(sessionId, blob, { format: "openai" });
         sessionSent.set(hash, result.id);
         stored++;
+        processed++;
       } catch (err) {
         this.logger.warn(`acontext: storeMessage failed at index ${startIndex + i}: ${String(err)}`);
         break;
@@ -611,40 +744,28 @@ export class AcontextBridge {
     if (stored > 0) {
       await this.persistSentMessages();
     }
-    return stored;
+    return { stored, processed };
   }
 
-  async flush(sessionId: string): Promise<void> {
+  async flush(sessionId: string): Promise<{ status: number; errmsg: string }> {
     const client = await this.ensureClient();
-    await client.sessions.flush(sessionId);
-  }
-
-  async waitForProcessing(
-    sessionId: string,
-    timeoutMs = 30_000,
-  ): Promise<boolean> {
-    const client = await this.ensureClient();
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      try {
-        const status =
-          await client.sessions.messagesObservingStatus(sessionId);
-        if (status.pending === 0 && status.in_process === 0) return true;
-      } catch (err) {
-        this.logger.warn(`acontext: waitForProcessing poll failed: ${String(err)}`);
-        return false;
-      }
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    return false;
+    return await client.sessions.flush(sessionId);
   }
 
   // -- Learn -------------------------------------------------------------------
 
   async learnFromSession(sessionId: string): Promise<LearnResult> {
     if (!this.learnedSessionsLoaded) {
-      await this.loadLearnedSessions();
-      this.learnedSessionsLoaded = true;
+      if (!this.learnedSessionsLoadPromise) {
+        this.learnedSessionsLoadPromise = this.loadLearnedSessions().then(() => {
+          this.learnedSessionsLoaded = true;
+          this.learnedSessionsLoadPromise = null;
+        }).catch((err) => {
+          this.learnedSessionsLoadPromise = null;
+          throw err;
+        });
+      }
+      await this.learnedSessionsLoadPromise;
     }
 
     if (this.learnedSessions.has(sessionId)) {
@@ -1106,10 +1227,9 @@ const acontextPlugin = {
           const newMessages = allMessages.slice(capturedMessageCursor);
           if (newMessages.length === 0) return;
 
-          const storedCount = await bridge.storeMessages(sessionId, newMessages, capturedMessageCursor);
-          // Advance cursor by total newMessages.length (including skipped duplicates)
-          // so the cursor controls slice efficiency; dedup is handled by hash.
-          capturedMessageCursor += newMessages.length;
+          const { stored: storedCount, processed } = await bridge.storeMessages(sessionId, newMessages, capturedMessageCursor);
+          // Advance cursor only by processed count (stored + skipped duplicates before any error)
+          capturedMessageCursor += processed;
           capturedTurnCount += 1;
 
           if (storedCount > 0) {
@@ -1127,7 +1247,14 @@ const acontextPlugin = {
 
             bridge
               .flush(learnSessionId)
-              .then(() => bridge.learnFromSession(learnSessionId))
+              .then((flushResult) => {
+                if (flushResult.status !== 0) {
+                  api.logger.warn(
+                    `acontext: flush returned non-zero status before auto-learn: ${flushResult.errmsg}`,
+                  );
+                }
+                return bridge.learnFromSession(learnSessionId);
+              })
               .then((result) => {
                 if (result.status === "learned") {
                   api.logger.info(

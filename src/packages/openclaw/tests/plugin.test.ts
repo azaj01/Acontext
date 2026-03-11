@@ -14,6 +14,7 @@ import {
   assertAllowedKeys,
   configSchema,
   sanitizeSkillName,
+  atomicWriteFile,
   AcontextBridge,
   type AcontextConfig,
   type BridgeLogger,
@@ -57,6 +58,14 @@ describe("resolveEnvVars", () => {
     expect(() => resolveEnvVars("${MISSING_VAR}")).toThrow(
       "Environment variable MISSING_VAR is not set",
     );
+  });
+
+  test("throws distinct error for empty string vs undefined", () => {
+    delete process.env.UNDEF_VAR;
+    expect(() => resolveEnvVars("${UNDEF_VAR}")).toThrow("is not set");
+
+    process.env.EMPTY_VAR = "";
+    expect(() => resolveEnvVars("${EMPTY_VAR}")).toThrow("is set but empty");
   });
 });
 
@@ -191,8 +200,10 @@ describe("configSchema.parse", () => {
 
   test("throws on apiKey that resolves to empty string", () => {
     process.env.EMPTY_KEY = "";
-    // resolveEnvVars treats empty env var as unset, so this throws "not set"
-    expect(() => configSchema.parse({ apiKey: "${EMPTY_KEY}" })).toThrow();
+    // resolveEnvVars now distinguishes empty from unset
+    expect(() => configSchema.parse({ apiKey: "${EMPTY_KEY}" })).toThrow(
+      "is set but empty",
+    );
   });
 });
 
@@ -275,9 +286,8 @@ describe("AcontextBridge", () => {
       sessions: {
         list: jest.fn<any>().mockResolvedValue({ items: [], has_more: false }),
         create: jest.fn<any>().mockResolvedValue({ id: "mock-session" }),
-        storeMessage: jest.fn<any>().mockResolvedValue({}),
+        storeMessage: jest.fn<any>().mockResolvedValue({ id: "mock-msg-id" }),
         flush: jest.fn<any>().mockResolvedValue({ status: 0, errmsg: "" }),
-        messagesObservingStatus: jest.fn<any>().mockResolvedValue({ observed: 0, in_process: 0, pending: 0 }),
         getSessionSummary: jest.fn<any>().mockResolvedValue(""),
       },
       learningSpaces: {
@@ -303,7 +313,6 @@ describe("AcontextBridge", () => {
     const cfg = { ...baseCfg, skillsDir };
     const bridge = new AcontextBridge(cfg, dataDir, skillsDir, mockLogger);
     (bridge as any).client = mockClient;
-    (bridge as any).initPromise = Promise.resolve();
     (bridge as any).learningSpaceId = "space-1";
     return bridge;
   }
@@ -619,14 +628,14 @@ describe("AcontextBridge", () => {
       ];
 
       // First call stores both
-      const stored1 = await bridge.storeMessages("sess-1", blobs, 0);
-      expect(stored1).toBe(2);
+      const result1 = await bridge.storeMessages("sess-1", blobs, 0);
+      expect(result1).toEqual({ stored: 2, processed: 2 });
       expect(mockClient.sessions.storeMessage).toHaveBeenCalledTimes(2);
 
       // Second call with same startIndex — both skipped
       mockClient.sessions.storeMessage.mockClear();
-      const stored2 = await bridge.storeMessages("sess-1", blobs, 0);
-      expect(stored2).toBe(0);
+      const result2 = await bridge.storeMessages("sess-1", blobs, 0);
+      expect(result2).toEqual({ stored: 0, processed: 2 });
       expect(mockClient.sessions.storeMessage).not.toHaveBeenCalled();
     });
 
@@ -647,12 +656,12 @@ describe("AcontextBridge", () => {
 
       // Now send 3 messages starting at index 0 — first 2 should be skipped
       mockClient.sessions.storeMessage.mockClear();
-      const stored = await bridge.storeMessages("sess-1", [
+      const result = await bridge.storeMessages("sess-1", [
         { role: "user", content: "msg1" },
         { role: "assistant", content: "msg2" },
         { role: "user", content: "msg3" },
       ], 0);
-      expect(stored).toBe(1);
+      expect(result).toEqual({ stored: 1, processed: 3 });
       expect(mockClient.sessions.storeMessage).toHaveBeenCalledTimes(1);
     });
 
@@ -661,7 +670,8 @@ describe("AcontextBridge", () => {
       mockClient.sessions.storeMessage.mockResolvedValue({ id: "msg-1" });
       const bridge = createBridge(mockClient);
 
-      await bridge.storeMessages("sess-1", [{ role: "user", content: "hi" }], 0);
+      const result = await bridge.storeMessages("sess-1", [{ role: "user", content: "hi" }], 0);
+      expect(result).toEqual({ stored: 1, processed: 1 });
 
       const raw = await fs.readFile(path.join(dataDir, ".sent-messages.json"), "utf-8");
       const data = JSON.parse(raw);
@@ -692,7 +702,7 @@ describe("AcontextBridge", () => {
       ], 0);
 
       // Only the second message should be sent
-      expect(stored).toBe(1);
+      expect(stored).toEqual({ stored: 1, processed: 2 });
       expect(mockClient.sessions.storeMessage).toHaveBeenCalledTimes(1);
     });
 
@@ -720,7 +730,7 @@ describe("AcontextBridge", () => {
       ], 0);
 
       // Only q2 (index 2) should be new
-      expect(stored).toBe(1);
+      expect(stored).toEqual({ stored: 1, processed: 3 });
       expect(mockClient.sessions.storeMessage).toHaveBeenCalledTimes(1);
     });
   });
@@ -743,8 +753,8 @@ describe("AcontextBridge", () => {
         { role: "assistant", content: "msg4" },
       ];
 
-      const stored = await bridge.storeMessages("sess-1", blobs, 0);
-      expect(stored).toBe(2);
+      const result = await bridge.storeMessages("sess-1", blobs, 0);
+      expect(result).toEqual({ stored: 2, processed: 2 });
       expect(mockClient.sessions.storeMessage).toHaveBeenCalledTimes(3);
       expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.stringContaining("storeMessage failed at index 2"),
@@ -756,8 +766,8 @@ describe("AcontextBridge", () => {
       mockClient.sessions.storeMessage.mockRejectedValue(new Error("fail"));
       const bridge = createBridge(mockClient);
 
-      const stored = await bridge.storeMessages("sess-1", [{ role: "user", content: "msg1" }]);
-      expect(stored).toBe(0);
+      const result = await bridge.storeMessages("sess-1", [{ role: "user", content: "msg1" }]);
+      expect(result).toEqual({ stored: 0, processed: 0 });
     });
 
     test("returns full count when all messages succeed", async () => {
@@ -769,8 +779,8 @@ describe("AcontextBridge", () => {
         { role: "user", content: "msg1" },
         { role: "assistant", content: "msg2" },
       ];
-      const stored = await bridge.storeMessages("sess-1", blobs);
-      expect(stored).toBe(2);
+      const result = await bridge.storeMessages("sess-1", blobs);
+      expect(result).toEqual({ stored: 2, processed: 2 });
     });
   });
 
@@ -878,6 +888,867 @@ describe("AcontextBridge", () => {
 
       const fileExists = await fs.access(path.join(dataDir, ".learned-sessions.json")).then(() => true, () => false);
       expect(fileExists).toBe(false);
+    });
+  });
+
+  describe("ensureSession — concurrent deduplication", () => {
+    test("concurrent calls for the same key share one create", async () => {
+      let resolveCreate!: (value: { id: string }) => void;
+      const createPromise = new Promise<{ id: string }>((resolve) => {
+        resolveCreate = resolve;
+      });
+      const mockClient = createMockClient();
+      mockClient.sessions.create.mockReturnValue(createPromise);
+      const bridge = createBridge(mockClient);
+
+      const p1 = bridge.ensureSession("key-1");
+      const p2 = bridge.ensureSession("key-1");
+      const p3 = bridge.ensureSession("key-1");
+
+      resolveCreate({ id: "session-deduped" });
+
+      const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+
+      expect(r1).toBe("session-deduped");
+      expect(r2).toBe("session-deduped");
+      expect(r3).toBe("session-deduped");
+      expect(mockClient.sessions.create).toHaveBeenCalledTimes(1);
+    });
+
+    test("different keys create separate sessions", async () => {
+      const mockClient = createMockClient();
+      mockClient.sessions.create
+        .mockResolvedValueOnce({ id: "session-a" })
+        .mockResolvedValueOnce({ id: "session-b" });
+      const bridge = createBridge(mockClient);
+
+      const [a, b] = await Promise.all([
+        bridge.ensureSession("key-a"),
+        bridge.ensureSession("key-b"),
+      ]);
+
+      expect(a).toBe("session-a");
+      expect(b).toBe("session-b");
+      expect(mockClient.sessions.create).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("ensureSession — list error propagation", () => {
+    test("propagates network error from sessions.list instead of creating", async () => {
+      const mockClient = createMockClient();
+      mockClient.sessions.list.mockRejectedValue(new Error("network timeout"));
+      const bridge = createBridge(mockClient);
+
+      await expect(bridge.ensureSession("key-1")).rejects.toThrow("network timeout");
+      expect(mockClient.sessions.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("ensureSession — retry after failure", () => {
+    test("retries after failure instead of being permanently broken", async () => {
+      const mockClient = createMockClient();
+      mockClient.sessions.list
+        .mockRejectedValueOnce(new Error("network timeout"))
+        .mockResolvedValueOnce({ items: [], has_more: false });
+      mockClient.sessions.create.mockResolvedValue({ id: "session-retry" });
+      const bridge = createBridge(mockClient);
+
+      // First call should fail
+      await expect(bridge.ensureSession("key-1")).rejects.toThrow("network timeout");
+
+      // Second call should succeed (sessionPromises cleaned up)
+      const result = await bridge.ensureSession("key-1");
+      expect(result).toBe("session-retry");
+    });
+
+    test("concurrent callers during failure all receive the error and can retry", async () => {
+      const mockClient = createMockClient();
+      mockClient.sessions.list
+        .mockRejectedValueOnce(new Error("network timeout"))
+        .mockResolvedValue({ items: [], has_more: false });
+      mockClient.sessions.create.mockResolvedValue({ id: "session-after-retry" });
+      const bridge = createBridge(mockClient);
+
+      // Concurrent calls should all fail
+      const results = await Promise.allSettled([
+        bridge.ensureSession("key-1"),
+        bridge.ensureSession("key-1"),
+      ]);
+      expect(results[0].status).toBe("rejected");
+      expect(results[1].status).toBe("rejected");
+
+      // Retry should succeed
+      const result = await bridge.ensureSession("key-1");
+      expect(result).toBe("session-after-retry");
+    });
+  });
+
+  describe("ensureLearningSpace — list error propagation", () => {
+    test("propagates network error from learningSpaces.list instead of creating", async () => {
+      const mockClient = createMockClient();
+      mockClient.learningSpaces.list.mockRejectedValue(new Error("server error 500"));
+      // Need a bridge without pre-set learningSpaceId
+      const cfg = { ...baseCfg, skillsDir };
+      const bridge = new AcontextBridge(cfg, dataDir, skillsDir, mockLogger);
+      (bridge as any).client = mockClient;
+      // Do NOT set learningSpaceId so ensureLearningSpace actually calls _createOrFindLearningSpace
+
+      await expect(bridge.ensureLearningSpace()).rejects.toThrow("server error 500");
+      expect(mockClient.learningSpaces.create).not.toHaveBeenCalled();
+    });
+
+    test("retries after failure instead of being permanently broken", async () => {
+      const mockClient = createMockClient();
+      mockClient.learningSpaces.list
+        .mockRejectedValueOnce(new Error("transient error"))
+        .mockResolvedValueOnce({ items: [{ id: "space-retry" }], has_more: false });
+      const cfg = { ...baseCfg, skillsDir };
+      const bridge = new AcontextBridge(cfg, dataDir, skillsDir, mockLogger);
+      (bridge as any).client = mockClient;
+
+      // First call should fail
+      await expect(bridge.ensureLearningSpace()).rejects.toThrow("transient error");
+
+      // Second call should succeed (learningSpacePromise cleaned up)
+      const result = await bridge.ensureLearningSpace();
+      expect(result).toBe("space-retry");
+    });
+
+    test("concurrent callers during failure all receive the error and can retry", async () => {
+      const mockClient = createMockClient();
+      mockClient.learningSpaces.list
+        .mockRejectedValueOnce(new Error("transient error"))
+        .mockResolvedValue({ items: [{ id: "space-retry" }], has_more: false });
+      const cfg = { ...baseCfg, skillsDir };
+      const bridge = new AcontextBridge(cfg, dataDir, skillsDir, mockLogger);
+      (bridge as any).client = mockClient;
+
+      // Concurrent calls should all fail
+      const results = await Promise.allSettled([
+        bridge.ensureLearningSpace(),
+        bridge.ensureLearningSpace(),
+      ]);
+      expect(results[0].status).toBe("rejected");
+      expect(results[1].status).toBe("rejected");
+
+      // Retry should succeed
+      const result = await bridge.ensureLearningSpace();
+      expect(result).toBe("space-retry");
+    });
+  });
+
+  describe("storeMessages — concurrent load deduplication", () => {
+    test("concurrent storeMessages calls share the same load promise", async () => {
+      const mockClient = createMockClient();
+      let msgCounter = 0;
+      mockClient.sessions.storeMessage.mockImplementation(async () => {
+        msgCounter++;
+        return { id: `msg-${msgCounter}` };
+      });
+      const bridge = createBridge(mockClient);
+
+      // Both calls will trigger loadSentMessages, but should only load once
+      const [r1, r2] = await Promise.all([
+        bridge.storeMessages("sess-1", [{ role: "user", content: "msg1" }], 0),
+        bridge.storeMessages("sess-2", [{ role: "user", content: "msg2" }], 0),
+      ]);
+
+      expect(r1.stored).toBe(1);
+      expect(r2.stored).toBe(1);
+    });
+  });
+
+  describe("sentMessages — eviction", () => {
+    test("evicts oldest sessions when exceeding MAX_SENT_SESSIONS", async () => {
+      const mockClient = createMockClient();
+      let msgCounter = 0;
+      mockClient.sessions.storeMessage.mockImplementation(async () => {
+        msgCounter++;
+        return { id: `msg-${msgCounter}` };
+      });
+      const bridge = createBridge(mockClient);
+
+      // Store messages for MAX + 5 sessions
+      const max = AcontextBridge.MAX_SENT_SESSIONS;
+      for (let i = 0; i < max + 5; i++) {
+        await bridge.storeMessages(`sess-${i}`, [{ role: "user", content: `hi-${i}` }], 0);
+      }
+
+      // Read persisted file — should have at most MAX sessions
+      const raw = await fs.readFile(path.join(dataDir, ".sent-messages.json"), "utf-8");
+      const data = JSON.parse(raw);
+      expect(Object.keys(data).length).toBeLessThanOrEqual(max);
+
+      // Oldest sessions should have been evicted
+      expect(data["sess-0"]).toBeUndefined();
+      expect(data["sess-4"]).toBeUndefined();
+      // Newest sessions should still exist
+      expect(data[`sess-${max + 4}`]).toBeDefined();
+    });
+  });
+
+  describe("learnedSessions — eviction", () => {
+    test("caps at MAX_LEARNED_SESSIONS", async () => {
+      const mockClient = createMockClient();
+      const bridge = createBridge(mockClient);
+
+      const max = AcontextBridge.MAX_LEARNED_SESSIONS;
+      // Seed learned sessions beyond the cap
+      for (let i = 0; i < max + 10; i++) {
+        (bridge as any).learnedSessions.add(`sess-${i}`);
+      }
+      (bridge as any).learnedSessionsLoaded = true;
+
+      // Trigger persist (via learnFromSession which will skip due to already-in-set,
+      // so we call persistLearnedSessions directly)
+      await (bridge as any).persistLearnedSessions();
+
+      const raw = await fs.readFile(path.join(dataDir, ".learned-sessions.json"), "utf-8");
+      const ids = JSON.parse(raw) as string[];
+      expect(ids.length).toBeLessThanOrEqual(max);
+      // Oldest should be evicted
+      expect(ids).not.toContain("sess-0");
+      // Newest should remain
+      expect(ids).toContain(`sess-${max + 9}`);
+    });
+  });
+
+  describe("storeMessages — partial failure cursor", () => {
+    test("processed count reflects only messages before error", async () => {
+      const mockClient = createMockClient();
+      let callCount = 0;
+      mockClient.sessions.storeMessage.mockImplementation(async () => {
+        callCount++;
+        if (callCount === 3) throw new Error("network error");
+        return { id: `msg-${callCount}` };
+      });
+      const bridge = createBridge(mockClient);
+
+      const blobs = [
+        { role: "user", content: "msg1" },
+        { role: "assistant", content: "msg2" },
+        { role: "user", content: "msg3" },
+        { role: "assistant", content: "msg4" },
+      ];
+
+      const result = await bridge.storeMessages("sess-1", blobs, 0);
+      // 2 stored successfully, msg3 failed, msg4 never attempted
+      // processed = 2 (only the ones that completed before the break)
+      expect(result.stored).toBe(2);
+      expect(result.processed).toBe(2);
+    });
+  });
+
+  describe("ensureClient — retry on init failure", () => {
+    test("retries after _init() failure instead of being permanently broken", async () => {
+      const cfg = { ...baseCfg, skillsDir };
+      const bridge = new AcontextBridge(cfg, dataDir, skillsDir, mockLogger);
+
+      // Simulate _init failure by making the dynamic import throw
+      let initCallCount = 0;
+      const mockClient = createMockClient();
+      (bridge as any)._init = async () => {
+        initCallCount++;
+        if (initCallCount === 1) {
+          throw new Error("module not found");
+        }
+        (bridge as any).client = mockClient;
+      };
+
+      // First call should fail
+      await expect((bridge as any).ensureClient()).rejects.toThrow("module not found");
+
+      // initPromise should be cleared, allowing retry
+      expect((bridge as any).initPromise).toBeNull();
+
+      // Second call should succeed
+      const client = await (bridge as any).ensureClient();
+      expect(client).toBe(mockClient);
+      expect(initCallCount).toBe(2);
+    });
+
+    test("concurrent callers during init failure all receive the error and can retry", async () => {
+      const cfg = { ...baseCfg, skillsDir };
+      const bridge = new AcontextBridge(cfg, dataDir, skillsDir, mockLogger);
+
+      let initCallCount = 0;
+      const mockClient = createMockClient();
+      (bridge as any)._init = async () => {
+        initCallCount++;
+        if (initCallCount === 1) {
+          throw new Error("init failed");
+        }
+        (bridge as any).client = mockClient;
+      };
+
+      // Concurrent calls should all fail
+      const results = await Promise.allSettled([
+        (bridge as any).ensureClient(),
+        (bridge as any).ensureClient(),
+      ]);
+      expect(results[0].status).toBe("rejected");
+      expect(results[1].status).toBe("rejected");
+
+      // Retry should succeed
+      const client = await (bridge as any).ensureClient();
+      expect(client).toBe(mockClient);
+    });
+  });
+
+  describe("sentMessagesLoadPromise — retry on load failure", () => {
+    test("retries loading sent messages after failure", async () => {
+      const mockClient = createMockClient();
+      mockClient.sessions.storeMessage.mockResolvedValue({ id: "msg-1" });
+      const bridge = createBridge(mockClient);
+
+      // Write invalid JSON to sent-messages file to trigger parse error
+      await fs.mkdir(dataDir, { recursive: true });
+      // Override loadSentMessages to throw on first call
+      let loadCallCount = 0;
+      const originalLoad = (bridge as any).loadSentMessages.bind(bridge);
+      (bridge as any).loadSentMessages = async () => {
+        loadCallCount++;
+        if (loadCallCount === 1) {
+          throw new Error("disk read failed");
+        }
+        return originalLoad();
+      };
+
+      // First storeMessages should fail due to load error
+      await expect(
+        bridge.storeMessages("sess-1", [{ role: "user", content: "hi" }], 0),
+      ).rejects.toThrow("disk read failed");
+
+      // sentMessagesLoadPromise should be cleared
+      expect((bridge as any).sentMessagesLoadPromise).toBeNull();
+
+      // Second call should succeed (loadSentMessages succeeds this time)
+      const result = await bridge.storeMessages("sess-1", [{ role: "user", content: "hi" }], 0);
+      expect(result.stored).toBe(1);
+    });
+  });
+
+  describe("learnedSessionsLoadPromise — retry on load failure", () => {
+    test("retries loading learned sessions after failure", async () => {
+      const mockClient = createMockClient();
+      const bridge = createBridge(mockClient);
+
+      let loadCallCount = 0;
+      const originalLoad = (bridge as any).loadLearnedSessions.bind(bridge);
+      (bridge as any).loadLearnedSessions = async () => {
+        loadCallCount++;
+        if (loadCallCount === 1) {
+          throw new Error("disk read failed");
+        }
+        return originalLoad();
+      };
+
+      // First learnFromSession should fail due to load error
+      await expect(bridge.learnFromSession("sess-1")).rejects.toThrow("disk read failed");
+
+      // learnedSessionsLoadPromise should be cleared
+      expect((bridge as any).learnedSessionsLoadPromise).toBeNull();
+
+      // Second call should succeed
+      const result = await bridge.learnFromSession("sess-1");
+      expect(result).toEqual({ status: "learned", id: "learn-1" });
+    });
+  });
+
+  describe("loadSentMessages — corrupt JSON handling", () => {
+    test("warns on corrupt JSON but still works with empty state", async () => {
+      const mockClient = createMockClient();
+      mockClient.sessions.storeMessage.mockResolvedValue({ id: "msg-1" });
+      const bridge = createBridge(mockClient);
+
+      // Write corrupt JSON to sent-messages file
+      await fs.mkdir(dataDir, { recursive: true });
+      await fs.writeFile(path.join(dataDir, ".sent-messages.json"), "{corrupt", "utf-8");
+
+      // storeMessages should succeed — corrupt file logged as warning, state starts empty
+      const result = await bridge.storeMessages("sess-1", [{ role: "user", content: "hi" }], 0);
+      expect(result.stored).toBe(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("failed to load sent-messages state"),
+      );
+    });
+
+    test("does not warn when file simply does not exist", async () => {
+      const mockClient = createMockClient();
+      mockClient.sessions.storeMessage.mockResolvedValue({ id: "msg-1" });
+      const bridge = createBridge(mockClient);
+
+      // No file on disk — should not warn
+      const result = await bridge.storeMessages("sess-1", [{ role: "user", content: "hi" }], 0);
+      expect(result.stored).toBe(1);
+      expect(mockLogger.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining("failed to load sent-messages state"),
+      );
+    });
+  });
+
+  describe("loadLearnedSessions — corrupt JSON handling", () => {
+    test("warns on corrupt JSON but still works with empty state", async () => {
+      const mockClient = createMockClient();
+      const bridge = createBridge(mockClient);
+
+      // Write corrupt JSON to learned-sessions file
+      await fs.mkdir(dataDir, { recursive: true });
+      await fs.writeFile(path.join(dataDir, ".learned-sessions.json"), "not-json!", "utf-8");
+
+      // learnFromSession should succeed — corrupt file logged as warning, state starts empty
+      const result = await bridge.learnFromSession("sess-1");
+      expect(result).toEqual({ status: "learned", id: "learn-1" });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("failed to load learned-sessions state"),
+      );
+    });
+
+    test("does not warn when file simply does not exist", async () => {
+      const mockClient = createMockClient();
+      const bridge = createBridge(mockClient);
+
+      // No file on disk — should not warn
+      const result = await bridge.learnFromSession("sess-1");
+      expect(result).toEqual({ status: "learned", id: "learn-1" });
+      expect(mockLogger.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining("failed to load learned-sessions state"),
+      );
+    });
+  });
+
+  describe("downloadSkillFiles — content type handling", () => {
+    test("decodes base64 content when type is base64", async () => {
+      const originalContent = "# Hello World\nThis is a skill.";
+      const base64Content = Buffer.from(originalContent).toString("base64");
+
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "base64-skill", description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+        getFile: async () => ({
+          content: { type: "base64", raw: base64Content },
+          url: null,
+        }),
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+
+      const content = await fs.readFile(
+        path.join(skillsDir, "base64-skill", "SKILL.md"),
+        "utf-8",
+      );
+      expect(content).toBe(originalContent);
+    });
+
+    test("writes text content directly when type is text", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "text-skill", description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+        getFile: async () => ({
+          content: { type: "text", raw: "# Direct text content" },
+          url: null,
+        }),
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+
+      const content = await fs.readFile(
+        path.join(skillsDir, "text-skill", "SKILL.md"),
+        "utf-8",
+      );
+      expect(content).toBe("# Direct text content");
+    });
+  });
+
+  describe("path traversal — path.relative approach", () => {
+    test("rejects absolute paths embedded in file_index", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "abs-path-skill", description: "desc",
+          disk_id: "d1",
+          file_index: [{ path: "/etc/passwd.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+      });
+      const bridge = createBridge(mockClient);
+      await bridge.syncSkillsToLocal();
+
+      expect(mockClient.skills.getFile).not.toHaveBeenCalled();
+      expect(loggedWarnings.some((w) => w.includes("path traversal"))).toBe(true);
+    });
+  });
+
+  describe("downloadSkillFiles — partial failure preserves old updatedAt", () => {
+    test("failed download preserves old updatedAt so skill is retried next sync", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "flaky-skill", description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+        getFile: async () => { throw new Error("network error"); },
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+
+      // Manifest should have empty updatedAt (no previous local entry) so it's retried
+      const raw = await fs.readFile(path.join(dataDir, ".manifest.json"), "utf-8");
+      const manifest = JSON.parse(raw);
+      expect(manifest.skills[0].updatedAt).toBe("");
+    });
+
+    test("failed download preserves previous updatedAt from manifest", async () => {
+      let callCount = 0;
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "flaky-skill", description: "desc",
+          disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+          updated_at: "2026-02-01T00:00:00Z",
+        }],
+        getFile: async () => {
+          callCount++;
+          if (callCount <= 1) {
+            return { content: { type: "text", raw: "# OK" }, url: null };
+          }
+          throw new Error("network error");
+        },
+      });
+      const bridge = createBridge(mockClient);
+
+      // First sync succeeds — manifest records updatedAt = 2026-02-01
+      await bridge.syncSkillsToLocal();
+      const raw1 = await fs.readFile(path.join(dataDir, ".manifest.json"), "utf-8");
+      const m1 = JSON.parse(raw1);
+      expect(m1.skills[0].updatedAt).toBe("2026-02-01T00:00:00Z");
+
+      // Second sync: remote has new updatedAt, but download fails
+      (bridge as any).skillsMetadata = null;
+      (bridge as any).skillsSynced = false;
+      mockClient.learningSpaces.listSkills.mockResolvedValue([{
+        id: "s1", name: "flaky-skill", description: "desc",
+        disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+        updated_at: "2026-03-01T00:00:00Z",
+      }]);
+      await bridge.syncSkillsToLocal();
+
+      // Manifest should preserve old updatedAt so it's retried
+      const raw2 = await fs.readFile(path.join(dataDir, ".manifest.json"), "utf-8");
+      const m2 = JSON.parse(raw2);
+      expect(m2.skills[0].updatedAt).toBe("2026-02-01T00:00:00Z");
+    });
+  });
+
+  describe("downloadSkillFiles — URL fetch as buffer", () => {
+    test("URL-fetched files are written as binary buffers", async () => {
+      const binaryContent = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+      const mockFetch = jest.spyOn(globalThis, "fetch").mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => binaryContent.buffer.slice(
+          binaryContent.byteOffset,
+          binaryContent.byteOffset + binaryContent.byteLength,
+        ),
+      } as any);
+
+      const mockClient = createMockClient({
+        listSkills: async () => [{
+          id: "s1", name: "url-skill", description: "desc",
+          disk_id: "d1", file_index: [{ path: "data.md", mime: "text/markdown" }],
+          updated_at: "2026-01-01T00:00:00Z",
+        }],
+        getFile: async () => ({
+          content: null,
+          url: "https://example.com/data.md",
+        }),
+      });
+      const bridge = createBridge(mockClient);
+
+      await bridge.syncSkillsToLocal();
+
+      const written = await fs.readFile(path.join(skillsDir, "url-skill", "data.md"));
+      expect(Buffer.compare(written, binaryContent)).toBe(0);
+
+      mockFetch.mockRestore();
+    });
+  });
+
+  describe("getRecentSessionSummaries — per-call error boundary", () => {
+    test("continues after one summary fetch fails", async () => {
+      let callCount = 0;
+      const mockClient = createMockClient();
+      mockClient.sessions.list.mockResolvedValue({
+        items: [
+          { id: "s1", created_at: "2026-01-01" },
+          { id: "s2", created_at: "2026-01-02" },
+          { id: "s3", created_at: "2026-01-03" },
+        ],
+        has_more: false,
+      });
+      mockClient.sessions.getSessionSummary.mockImplementation(async (sessionId: string) => {
+        callCount++;
+        if (sessionId === "s2") throw new Error("summary fetch failed");
+        return `Summary of ${sessionId}`;
+      });
+      const bridge = createBridge(mockClient);
+
+      const result = await bridge.getRecentSessionSummaries(3);
+
+      // Should have summaries for s1 and s3, but not s2
+      expect(result).toContain("s1");
+      expect(result).toContain("s3");
+      expect(result).not.toContain("s2");
+      expect(callCount).toBe(3);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("getSessionSummary failed for s2"),
+      );
+    });
+  });
+
+  describe("atomicWriteFile", () => {
+    test("writes to tmp then renames to final path", async () => {
+      const filePath = path.join(tmpDir, "atomic-test.json");
+      await atomicWriteFile(filePath, '{"key":"value"}');
+
+      const content = await fs.readFile(filePath, "utf-8");
+      expect(content).toBe('{"key":"value"}');
+
+      // No stale tmp files should remain
+      const files = await fs.readdir(tmpDir);
+      const tmpFiles = files.filter((f) => f.includes(".tmp."));
+      expect(tmpFiles).toHaveLength(0);
+    });
+
+    test("overwrites existing file atomically", async () => {
+      const filePath = path.join(tmpDir, "atomic-overwrite.json");
+      await atomicWriteFile(filePath, "original");
+      await atomicWriteFile(filePath, "updated");
+
+      const content = await fs.readFile(filePath, "utf-8");
+      expect(content).toBe("updated");
+    });
+
+    test("cleans up tmp file when rename fails", async () => {
+      const subDir = path.join(tmpDir, "atomic-rename-fail");
+      await fs.mkdir(subDir, { recursive: true });
+      // Target is a directory — rename(file, dir) will fail with EISDIR/ENOTDIR
+      const targetDir = path.join(subDir, "target-is-a-dir");
+      await fs.mkdir(targetDir, { recursive: true });
+
+      await expect(atomicWriteFile(targetDir, "data")).rejects.toThrow();
+
+      // tmp file should have been cleaned up
+      const files = await fs.readdir(subDir);
+      const tmpFiles = files.filter((f) => f.includes(".tmp."));
+      expect(tmpFiles).toHaveLength(0);
+    });
+  });
+
+  describe("sanitized name collision detection", () => {
+    test("logs warning and excludes both colliding skills", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [
+          {
+            id: "s1", name: "My Skill!", description: "first",
+            disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "s2", name: "my skill?", description: "second",
+            disk_id: "d2", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "s3", name: "Safe Skill", description: "no collision",
+            disk_id: "d3", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const bridge = createBridge(mockClient);
+
+      const skills = await bridge.syncSkillsToLocal();
+
+      expect(loggedWarnings.some((w) => w.includes("sanitized name collision"))).toBe(true);
+      // Both colliding skills excluded, only safe skill remains
+      expect(skills).toHaveLength(1);
+      expect(skills[0].id).toBe("s3");
+      // Only safe skill's files should be downloaded (colliding skills are never downloaded)
+      expect(mockClient.skills.getFile).toHaveBeenCalledWith(
+        expect.objectContaining({ skillId: "s3" }),
+      );
+      // Colliding skills should NOT have been downloaded
+      expect(mockClient.skills.getFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ skillId: "s1" }),
+      );
+      expect(mockClient.skills.getFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ skillId: "s2" }),
+      );
+    });
+
+    test("both colliding skills excluded from returned list and manifest", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [
+          {
+            id: "s1", name: "My Skill!", description: "first",
+            disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "s2", name: "my skill?", description: "second (collides)",
+            disk_id: "d2", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const bridge = createBridge(mockClient);
+
+      const skills = await bridge.syncSkillsToLocal();
+
+      // Both colliding skills should NOT appear in returned skills
+      expect(skills).toHaveLength(0);
+
+      // Neither should appear in manifest
+      const raw = await fs.readFile(path.join(dataDir, ".manifest.json"), "utf-8");
+      const manifest = JSON.parse(raw);
+      expect(manifest.skills).toHaveLength(0);
+
+      // listSkills should also return empty
+      const listed = await bridge.listSkills();
+      expect(listed).toHaveLength(0);
+    });
+
+    test("previously synced colliding skill does not emit spurious 'deleted skill dir' warning", async () => {
+      // First sync: s1 gets synced normally
+      const mockClient1 = createMockClient({
+        listSkills: async () => [
+          {
+            id: "s1", name: "My Skill!", description: "first",
+            disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const bridge1 = createBridge(mockClient1);
+      await bridge1.syncSkillsToLocal();
+      loggedWarnings = [];
+
+      // Second sync: s2 collides with s1
+      const mockClient2 = createMockClient({
+        listSkills: async () => [
+          {
+            id: "s1", name: "My Skill!", description: "first",
+            disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "s2", name: "my skill?", description: "collider",
+            disk_id: "d2", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const bridge2 = createBridge(mockClient2);
+      await bridge2.syncSkillsToLocal();
+
+      // Should NOT see "failed to remove deleted skill dir" warning
+      expect(loggedWarnings.some((w) => w.includes("failed to remove deleted skill dir"))).toBe(false);
+    });
+
+    test("previously synced skill's disk dir cleaned up when collision occurs", async () => {
+      // First sync: s1 gets synced normally
+      const mockClient1 = createMockClient({
+        listSkills: async () => [
+          {
+            id: "s1", name: "My Skill!", description: "first",
+            disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const bridge1 = createBridge(mockClient1);
+      await bridge1.syncSkillsToLocal();
+
+      // Verify s1 dir exists on disk
+      const s1Dir = path.join(skillsDir, "my-skill");
+      const exists1 = await fs.stat(s1Dir).then(() => true, () => false);
+      expect(exists1).toBe(true);
+
+      // Second sync: s2 collides with s1 — both should be removed
+      const mockClient2 = createMockClient({
+        listSkills: async () => [
+          {
+            id: "s1", name: "My Skill!", description: "first",
+            disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "s2", name: "my skill?", description: "collider",
+            disk_id: "d2", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const bridge2 = createBridge(mockClient2);
+      const skills = await bridge2.syncSkillsToLocal();
+
+      expect(skills).toHaveLength(0);
+
+      // s1's disk directory should be cleaned up
+      const exists2 = await fs.stat(s1Dir).then(() => true, () => false);
+      expect(exists2).toBe(false);
+    });
+
+    test("three-way sanitized name collision excludes all three", async () => {
+      const mockClient = createMockClient({
+        listSkills: async () => [
+          {
+            id: "s1", name: "My Skill!", description: "first",
+            disk_id: "d1", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "s2", name: "my skill?", description: "second",
+            disk_id: "d2", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "s3", name: "MY SKILL", description: "third",
+            disk_id: "d3", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "s4", name: "Safe Skill", description: "no collision",
+            disk_id: "d4", file_index: [{ path: "SKILL.md", mime: "text/markdown" }],
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+      const bridge = createBridge(mockClient);
+
+      const skills = await bridge.syncSkillsToLocal();
+
+      expect(loggedWarnings.some((w) => w.includes("sanitized name collision"))).toBe(true);
+      // All three colliding skills excluded, only safe skill remains
+      expect(skills).toHaveLength(1);
+      expect(skills[0].id).toBe("s4");
+      // None of the colliding skills should have been downloaded
+      expect(mockClient.skills.getFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ skillId: "s1" }),
+      );
+      expect(mockClient.skills.getFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ skillId: "s2" }),
+      );
+      expect(mockClient.skills.getFile).not.toHaveBeenCalledWith(
+        expect.objectContaining({ skillId: "s3" }),
+      );
     });
   });
 });
@@ -1200,5 +2071,98 @@ describe("before_compaction and before_reset hooks", () => {
 
     expect(hooks["before_compaction"]).toBeUndefined();
     expect(hooks["before_reset"]).toBeUndefined();
+  });
+
+  test("before_compaction → agent_end resets cursor and re-sends all messages", async () => {
+    const { default: plugin } = await import("../index");
+    const { api, hooks } = createMockApi({
+      apiKey: "sk-ac-test",
+      autoLearn: false,
+      minTurnsForLearn: 999,
+    });
+
+    plugin.register(api as any);
+
+    const agentEnd = hooks["agent_end"][0];
+    const beforeCompaction = hooks["before_compaction"][0];
+
+    // First agent_end: capture 2 messages
+    await agentEnd(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "msg1" },
+          { role: "assistant", content: "reply1" },
+        ],
+      },
+      { sessionKey: "compaction-test-key" },
+    );
+
+    // Trigger compaction
+    await beforeCompaction({}, {});
+
+    // Second agent_end after compaction: full transcript is re-sent
+    // (compaction rewrites messages so cursor should reset to 0)
+    await agentEnd(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "msg1" },
+          { role: "assistant", content: "reply1" },
+          { role: "user", content: "msg2" },
+        ],
+      },
+      { sessionKey: "compaction-test-key" },
+    );
+
+    // Should log a cursor reset message
+    expect(api.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("cursor reset"),
+    );
+  });
+
+  test("before_reset → agent_end creates new session and sends from index 0", async () => {
+    const { default: plugin } = await import("../index");
+    const { api, hooks } = createMockApi({
+      apiKey: "sk-ac-test",
+      autoLearn: false,
+      minTurnsForLearn: 999,
+    });
+
+    plugin.register(api as any);
+
+    const agentEnd = hooks["agent_end"][0];
+    const beforeReset = hooks["before_reset"][0];
+
+    // First agent_end: capture messages
+    await agentEnd(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "msg1" },
+          { role: "assistant", content: "reply1" },
+        ],
+      },
+      { sessionKey: "reset-test-key" },
+    );
+
+    // Trigger reset
+    await beforeReset({}, {});
+
+    // Second agent_end after reset: fresh session
+    await agentEnd(
+      {
+        success: true,
+        messages: [
+          { role: "user", content: "fresh-msg" },
+        ],
+      },
+      { sessionKey: "reset-test-key-2" },
+    );
+
+    // Should log a cursor reset message
+    expect(api.logger.info).toHaveBeenCalledWith(
+      expect.stringContaining("cursor reset"),
+    );
   });
 });
