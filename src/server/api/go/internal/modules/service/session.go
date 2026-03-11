@@ -170,9 +170,9 @@ type StoreMQPublishJSON struct {
 
 type PartIn struct {
 	Type      string                 `json:"type" validate:"required,oneof=text image audio video file tool-call tool-result data thinking redacted_thinking"` // "text" | "image" | ...
-	Text      string                 `json:"text,omitempty"`                                                                                 // Text sharding
-	FileField string                 `json:"file_field,omitempty"`                                                                           // File field name in the form
-	Meta      map[string]interface{} `json:"meta,omitempty"`                                                                                 // [Optional] metadata
+	Text      string                 `json:"text,omitempty"`                                                                                                   // Text sharding
+	FileField string                 `json:"file_field,omitempty"`                                                                                             // File field name in the form
+	Meta      map[string]interface{} `json:"meta,omitempty"`                                                                                                   // [Optional] metadata
 }
 
 func (p *PartIn) Validate() error {
@@ -442,15 +442,19 @@ func (s *sessionService) GetMessages(ctx context.Context, in GetMessagesInput) (
 		}
 	}
 
-	// Load parts for each message
+	// Load parts for each message, filtering out those with failed loads
+	n := 0
 	for i, m := range msgs {
 		meta := m.PartsAssetMeta.Data()
 		parts, ok := s.loadPartsForMessage(ctx, meta)
 		if !ok {
-			continue // Skip messages with failed parts loading
+			continue // Drop messages with failed parts loading
 		}
 		msgs[i].Parts = parts
+		msgs[n] = msgs[i]
+		n++
 	}
+	msgs = msgs[:n]
 
 	// Always sort messages from old to new (ascending by created_at)
 	// regardless of the in.TimeDesc parameter used for cursor pagination
@@ -605,7 +609,8 @@ func (s *sessionService) GetAllMessages(ctx context.Context, sessionID uuid.UUID
 		return nil, fmt.Errorf("failed to list messages: %w", err)
 	}
 
-	// Load parts for each message
+	// Load parts for each message, filtering out those with failed loads
+	n := 0
 	for i, m := range msgs {
 		meta := m.PartsAssetMeta.Data()
 		parts, ok := s.loadPartsForMessage(ctx, meta)
@@ -613,7 +618,10 @@ func (s *sessionService) GetAllMessages(ctx context.Context, sessionID uuid.UUID
 			continue
 		}
 		msgs[i].Parts = parts
+		msgs[n] = msgs[i]
+		n++
 	}
+	msgs = msgs[:n]
 
 	// Sort messages from old to new (ascending by created_at)
 	sort.Slice(msgs, func(i, j int) bool {
