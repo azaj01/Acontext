@@ -175,7 +175,7 @@ export function Hero() {
             ref={titleRef}
             className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight leading-tight sm:leading-[1.3] hero-title will-change-transform"
           >
-            <span className="cursor-default">Skill Memory for</span>
+            <span className="cursor-default">Agents Skill Memory for</span>
             <br />
             <RotatingText
               texts={ROTATING_WORDS}
