@@ -170,6 +170,7 @@ type LearningSpaceSessionRepo interface {
 	ExistsBySessionID(ctx context.Context, sessionID uuid.UUID) (bool, error)
 	GetBySpaceAndSessionID(ctx context.Context, learningSpaceID, sessionID uuid.UUID) (*model.LearningSpaceSession, error)
 	ListBySpaceID(ctx context.Context, learningSpaceID uuid.UUID) ([]*model.LearningSpaceSession, error)
+	UpdateStatus(ctx context.Context, learningSpaceID, sessionID uuid.UUID, status string) error
 }
 
 type learningSpaceSessionRepo struct {
@@ -210,4 +211,11 @@ func (r *learningSpaceSessionRepo) ListBySpaceID(ctx context.Context, learningSp
 		Order("created_at ASC").
 		Find(&items).Error
 	return items, err
+}
+
+func (r *learningSpaceSessionRepo) UpdateStatus(ctx context.Context, learningSpaceID, sessionID uuid.UUID, status string) error {
+	return r.db.WithContext(ctx).
+		Model(&model.LearningSpaceSession{}).
+		Where("learning_space_id = ? AND session_id = ?", learningSpaceID, sessionID).
+		Update("status", status).Error
 }

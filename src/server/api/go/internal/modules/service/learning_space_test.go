@@ -11,6 +11,7 @@ import (
 	"github.com/memodb-io/Acontext/internal/modules/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -137,6 +138,32 @@ func (m *MockLearningSpaceSessionRepo) ListBySpaceID(ctx context.Context, learni
 	return args.Get(0).([]*model.LearningSpaceSession), args.Error(1)
 }
 
+func (m *MockLearningSpaceSessionRepo) UpdateStatus(ctx context.Context, learningSpaceID, sessionID uuid.UUID, status string) error {
+	args := m.Called(ctx, learningSpaceID, sessionID, status)
+	return args.Error(0)
+}
+
+// ---------------------------------------------------------------------------
+// Mock: TaskRepo
+// ---------------------------------------------------------------------------
+
+type MockTaskRepo struct {
+	mock.Mock
+}
+
+func (m *MockTaskRepo) ListBySessionWithCursor(ctx context.Context, sessionID uuid.UUID, afterCreatedAt time.Time, afterID uuid.UUID, limit int, timeDesc bool) ([]model.Task, error) {
+	args := m.Called(ctx, sessionID, afterCreatedAt, afterID, limit, timeDesc)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]model.Task), args.Error(1)
+}
+
+func (m *MockTaskRepo) HasSuccessTask(ctx context.Context, sessionID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, sessionID)
+	return args.Bool(0), args.Error(1)
+}
+
 // NOTE: MockSessionRepo and MockAgentSkillsRepo are already declared in
 // session_test.go and agent_skills_test.go respectively (same package).
 
@@ -237,9 +264,11 @@ type lsMocks struct {
 	lsSessRepo     *MockLearningSpaceSessionRepo
 	skillsRepo     *MockAgentSkillsRepo
 	sessionRepo    *MockSessionRepo
+	taskRepo       *MockTaskRepo
 	agentSkillsSvc *MockLSAgentSkillsService
 	artifactSvc    *MockArtifactService
 	templateFS     fstest.MapFS
+	logger         *zap.Logger
 }
 
 func newLSMocks() lsMocks {
@@ -249,14 +278,16 @@ func newLSMocks() lsMocks {
 		lsSessRepo:     &MockLearningSpaceSessionRepo{},
 		skillsRepo:     &MockAgentSkillsRepo{},
 		sessionRepo:    &MockSessionRepo{},
+		taskRepo:       &MockTaskRepo{},
 		agentSkillsSvc: &MockLSAgentSkillsService{},
 		artifactSvc:    &MockArtifactService{},
 		templateFS:     newTestTemplateFS(),
+		logger:         zap.NewNop(),
 	}
 }
 
 func (m lsMocks) service() LearningSpaceService {
-	return NewLearningSpaceService(m.lsRepo, m.lsSkillRepo, m.lsSessRepo, m.skillsRepo, m.sessionRepo, m.agentSkillsSvc, m.artifactSvc, m.templateFS)
+	return NewLearningSpaceService(m.lsRepo, m.lsSkillRepo, m.lsSessRepo, m.skillsRepo, m.sessionRepo, m.taskRepo, m.agentSkillsSvc, m.artifactSvc, m.templateFS, m.logger)
 }
 
 // setupInitSkillsExpectations sets up mock expectations for the default skill
@@ -880,7 +911,7 @@ func TestLearningSpaceService_GetSession(t *testing.T) {
 	lsID := uuid.New()
 	sessionID := uuid.New()
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("success — non-pending status returned as-is", func(t *testing.T) {
 		m := newLSMocks()
 		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
 		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
@@ -897,6 +928,8 @@ func TestLearningSpaceService_GetSession(t *testing.T) {
 		assert.Equal(t, "completed", result.Status)
 		m.lsRepo.AssertExpectations(t)
 		m.lsSessRepo.AssertExpectations(t)
+		m.sessionRepo.AssertNotCalled(t, "HasUnfinishedMessages")
+		m.taskRepo.AssertNotCalled(t, "HasSuccessTask")
 	})
 
 	t.Run("space not found", func(t *testing.T) {
@@ -921,6 +954,177 @@ func TestLearningSpaceService_GetSession(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "not found")
 	})
+
+	t.Run("pending + messages still processing → stays pending", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(true, nil)
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "pending", result.Status)
+		m.taskRepo.AssertNotCalled(t, "HasSuccessTask")
+		m.sessionRepo.AssertNotCalled(t, "HasFailedMessages")
+		m.lsSessRepo.AssertNotCalled(t, "UpdateStatus")
+	})
+
+	t.Run("pending + all messages done + has success task → stays pending", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sessionID).Return(true, nil)
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "pending", result.Status)
+		m.sessionRepo.AssertNotCalled(t, "HasFailedMessages")
+		m.lsSessRepo.AssertNotCalled(t, "UpdateStatus")
+	})
+
+	t.Run("pending + all messages succeeded + no success task → resolved to completed", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sessionID).Return(false, nil)
+		m.sessionRepo.On("HasFailedMessages", ctx, sessionID).Return(false, nil)
+		m.lsSessRepo.On("UpdateStatus", ctx, lsID, sessionID, "completed").Return(nil)
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "completed", result.Status)
+		m.lsSessRepo.AssertCalled(t, "UpdateStatus", ctx, lsID, sessionID, "completed")
+	})
+
+	t.Run("pending + some messages failed + no success task → resolved to failed", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sessionID).Return(false, nil)
+		m.sessionRepo.On("HasFailedMessages", ctx, sessionID).Return(true, nil)
+		m.lsSessRepo.On("UpdateStatus", ctx, lsID, sessionID, "failed").Return(nil)
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "failed", result.Status)
+		m.lsSessRepo.AssertCalled(t, "UpdateStatus", ctx, lsID, sessionID, "failed")
+	})
+
+	t.Run("pending + zero messages + no tasks → resolved to completed", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sessionID).Return(false, nil)
+		m.sessionRepo.On("HasFailedMessages", ctx, sessionID).Return(false, nil)
+		m.lsSessRepo.On("UpdateStatus", ctx, lsID, sessionID, "completed").Return(nil)
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "completed", result.Status)
+	})
+
+	t.Run("non-pending statuses skip resolution", func(t *testing.T) {
+		for _, status := range []string{"running", "completed", "failed", "queued"} {
+			t.Run(status, func(t *testing.T) {
+				m := newLSMocks()
+				m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+				m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+					ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: status,
+				}, nil)
+
+				result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+				assert.NoError(t, err)
+				assert.Equal(t, status, result.Status)
+				m.sessionRepo.AssertNotCalled(t, "HasUnfinishedMessages")
+				m.taskRepo.AssertNotCalled(t, "HasSuccessTask")
+			})
+		}
+	})
+
+	t.Run("HasUnfinishedMessages error → keep pending (fail-open)", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(false, errors.New("db error"))
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "pending", result.Status)
+		m.taskRepo.AssertNotCalled(t, "HasSuccessTask")
+	})
+
+	t.Run("HasSuccessTask error → keep pending (fail-open)", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sessionID).Return(false, errors.New("db error"))
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "pending", result.Status)
+		m.sessionRepo.AssertNotCalled(t, "HasFailedMessages")
+	})
+
+	t.Run("HasFailedMessages error → default to completed", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sessionID).Return(false, nil)
+		m.sessionRepo.On("HasFailedMessages", ctx, sessionID).Return(false, errors.New("db error"))
+		m.lsSessRepo.On("UpdateStatus", ctx, lsID, sessionID, "completed").Return(nil)
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "completed", result.Status)
+	})
+
+	t.Run("UpdateStatus failure → still returns resolved status", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("GetBySpaceAndSessionID", ctx, lsID, sessionID).Return(&model.LearningSpaceSession{
+			ID: uuid.New(), LearningSpaceID: lsID, SessionID: sessionID, Status: "pending",
+		}, nil)
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sessionID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sessionID).Return(false, nil)
+		m.sessionRepo.On("HasFailedMessages", ctx, sessionID).Return(false, nil)
+		m.lsSessRepo.On("UpdateStatus", ctx, lsID, sessionID, "completed").Return(errors.New("db write error"))
+
+		result, err := m.service().GetSession(ctx, projectID, lsID, sessionID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "completed", result.Status)
+	})
 }
 
 func TestLearningSpaceService_ListSessions(t *testing.T) {
@@ -928,17 +1132,19 @@ func TestLearningSpaceService_ListSessions(t *testing.T) {
 	projectID := uuid.New()
 	lsID := uuid.New()
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("success — non-pending sessions returned as-is", func(t *testing.T) {
 		m := newLSMocks()
 		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
 		m.lsSessRepo.On("ListBySpaceID", ctx, lsID).Return([]*model.LearningSpaceSession{
-			{ID: uuid.New(), Status: "pending"},
+			{ID: uuid.New(), Status: "completed"},
 		}, nil)
 
 		result, err := m.service().ListSessions(ctx, projectID, lsID)
 
 		assert.NoError(t, err)
 		assert.Len(t, result, 1)
+		assert.Equal(t, "completed", result[0].Status)
+		m.sessionRepo.AssertNotCalled(t, "HasUnfinishedMessages")
 	})
 
 	t.Run("space not found", func(t *testing.T) {
@@ -949,5 +1155,75 @@ func TestLearningSpaceService_ListSessions(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, result)
+	})
+
+	t.Run("multiple sessions — mixed statuses resolved correctly", func(t *testing.T) {
+		m := newLSMocks()
+		sess1ID := uuid.New()
+		sess2ID := uuid.New()
+		sess3ID := uuid.New()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("ListBySpaceID", ctx, lsID).Return([]*model.LearningSpaceSession{
+			{ID: uuid.New(), LearningSpaceID: lsID, SessionID: sess1ID, Status: "pending"},
+			{ID: uuid.New(), LearningSpaceID: lsID, SessionID: sess2ID, Status: "completed"},
+			{ID: uuid.New(), LearningSpaceID: lsID, SessionID: sess3ID, Status: "running"},
+		}, nil)
+		// Only sess1 (pending) triggers resolution checks
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sess1ID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sess1ID).Return(false, nil)
+		m.sessionRepo.On("HasFailedMessages", ctx, sess1ID).Return(false, nil)
+		m.lsSessRepo.On("UpdateStatus", ctx, lsID, sess1ID, "completed").Return(nil)
+
+		result, err := m.service().ListSessions(ctx, projectID, lsID)
+
+		assert.NoError(t, err)
+		assert.Len(t, result, 3)
+		assert.Equal(t, "completed", result[0].Status)
+		assert.Equal(t, "completed", result[1].Status)
+		assert.Equal(t, "running", result[2].Status)
+	})
+
+	t.Run("all sessions already resolved — no Has* calls", func(t *testing.T) {
+		m := newLSMocks()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("ListBySpaceID", ctx, lsID).Return([]*model.LearningSpaceSession{
+			{ID: uuid.New(), Status: "completed"},
+			{ID: uuid.New(), Status: "failed"},
+		}, nil)
+
+		result, err := m.service().ListSessions(ctx, projectID, lsID)
+
+		assert.NoError(t, err)
+		assert.Len(t, result, 2)
+		m.sessionRepo.AssertNotCalled(t, "HasUnfinishedMessages")
+		m.taskRepo.AssertNotCalled(t, "HasSuccessTask")
+	})
+
+	t.Run("multiple pending sessions resolved differently", func(t *testing.T) {
+		m := newLSMocks()
+		sess1ID := uuid.New()
+		sess2ID := uuid.New()
+		m.lsRepo.On("GetByID", ctx, projectID, lsID).Return(&model.LearningSpace{ID: lsID, ProjectID: projectID}, nil)
+		m.lsSessRepo.On("ListBySpaceID", ctx, lsID).Return([]*model.LearningSpaceSession{
+			{ID: uuid.New(), LearningSpaceID: lsID, SessionID: sess1ID, Status: "pending"},
+			{ID: uuid.New(), LearningSpaceID: lsID, SessionID: sess2ID, Status: "pending"},
+		}, nil)
+		// sess1 resolves to completed
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sess1ID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sess1ID).Return(false, nil)
+		m.sessionRepo.On("HasFailedMessages", ctx, sess1ID).Return(false, nil)
+		m.lsSessRepo.On("UpdateStatus", ctx, lsID, sess1ID, "completed").Return(nil)
+		// sess2 resolves to failed
+		m.sessionRepo.On("HasUnfinishedMessages", ctx, sess2ID).Return(false, nil)
+		m.taskRepo.On("HasSuccessTask", ctx, sess2ID).Return(false, nil)
+		m.sessionRepo.On("HasFailedMessages", ctx, sess2ID).Return(true, nil)
+		m.lsSessRepo.On("UpdateStatus", ctx, lsID, sess2ID, "failed").Return(nil)
+
+		result, err := m.service().ListSessions(ctx, projectID, lsID)
+
+		assert.NoError(t, err)
+		assert.Len(t, result, 2)
+		assert.Equal(t, "completed", result[0].Status)
+		assert.Equal(t, "failed", result[1].Status)
 	})
 }

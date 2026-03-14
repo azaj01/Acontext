@@ -11,6 +11,7 @@ import (
 	"github.com/memodb-io/Acontext/internal/modules/model"
 	"github.com/memodb-io/Acontext/internal/modules/repo"
 	"github.com/memodb-io/Acontext/internal/pkg/paging"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
@@ -85,9 +86,11 @@ type learningSpaceService struct {
 	lsSessRepo     repo.LearningSpaceSessionRepo
 	skillsRepo     repo.AgentSkillsRepo
 	sessionRepo    repo.SessionRepo
+	taskRepo       repo.TaskRepo
 	agentSkillsSvc AgentSkillsService
 	artifactSvc    ArtifactService
 	templateFS     fs.ReadFileFS
+	logger         *zap.Logger
 }
 
 // DefaultSkillTemplatePaths lists the embedded template paths created alongside
@@ -104,9 +107,11 @@ func NewLearningSpaceService(
 	lsSessRepo repo.LearningSpaceSessionRepo,
 	skillsRepo repo.AgentSkillsRepo,
 	sessionRepo repo.SessionRepo,
+	taskRepo repo.TaskRepo,
 	agentSkillsSvc AgentSkillsService,
 	artifactSvc ArtifactService,
 	templateFS fs.ReadFileFS,
+	logger *zap.Logger,
 ) LearningSpaceService {
 	return &learningSpaceService{
 		lsRepo:         lsRepo,
@@ -114,9 +119,11 @@ func NewLearningSpaceService(
 		lsSessRepo:     lsSessRepo,
 		skillsRepo:     skillsRepo,
 		sessionRepo:    sessionRepo,
+		taskRepo:       taskRepo,
 		agentSkillsSvc: agentSkillsSvc,
 		artifactSvc:    artifactSvc,
 		templateFS:     templateFS,
+		logger:         logger,
 	}
 }
 
@@ -385,6 +392,7 @@ func (s *learningSpaceService) GetSession(ctx context.Context, projectID, learni
 		}
 		return nil, err
 	}
+	s.resolvePendingStatus(ctx, lss)
 	return lss, nil
 }
 
@@ -394,7 +402,59 @@ func (s *learningSpaceService) ListSessions(ctx context.Context, projectID, lear
 		return nil, err
 	}
 
-	return s.lsSessRepo.ListBySpaceID(ctx, learningSpaceID)
+	sessions, err := s.lsSessRepo.ListBySpaceID(ctx, learningSpaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, lss := range sessions {
+		s.resolvePendingStatus(ctx, lss)
+	}
+	return sessions, nil
+}
+
+// resolvePendingStatus lazily resolves a "pending" learning session to a
+// terminal status when it's clear that no SkillLearnTask will ever arrive.
+// The resolved status is persisted to the DB so subsequent reads skip the check.
+func (s *learningSpaceService) resolvePendingStatus(ctx context.Context, lss *model.LearningSpaceSession) {
+	if lss.Status != "pending" {
+		return
+	}
+
+	hasUnfinished, err := s.sessionRepo.HasUnfinishedMessages(ctx, lss.SessionID)
+	if err != nil {
+		s.logger.Warn("lazy status resolution: failed to check unfinished messages",
+			zap.String("session_id", lss.SessionID.String()), zap.Error(err))
+		return
+	}
+	if hasUnfinished {
+		return
+	}
+
+	hasSuccess, err := s.taskRepo.HasSuccessTask(ctx, lss.SessionID)
+	if err != nil {
+		s.logger.Warn("lazy status resolution: failed to check success tasks",
+			zap.String("session_id", lss.SessionID.String()), zap.Error(err))
+		return
+	}
+	if hasSuccess {
+		return
+	}
+
+	resolvedStatus := "completed"
+	hasFailed, err := s.sessionRepo.HasFailedMessages(ctx, lss.SessionID)
+	if err != nil {
+		s.logger.Warn("lazy status resolution: failed to check failed messages, defaulting to completed",
+			zap.String("session_id", lss.SessionID.String()), zap.Error(err))
+	} else if hasFailed {
+		resolvedStatus = "failed"
+	}
+
+	if err := s.lsSessRepo.UpdateStatus(ctx, lss.LearningSpaceID, lss.SessionID, resolvedStatus); err != nil {
+		s.logger.Warn("lazy status resolution: failed to persist resolved status",
+			zap.String("session_id", lss.SessionID.String()),
+			zap.String("resolved_status", resolvedStatus), zap.Error(err))
+	}
+	lss.Status = resolvedStatus
 }
 
 func (s *learningSpaceService) ExcludeSkill(ctx context.Context, projectID, learningSpaceID, skillID uuid.UUID) error {

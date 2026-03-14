@@ -39,6 +39,8 @@ type SessionRepo interface {
 	GetMessageByID(ctx context.Context, sessionID uuid.UUID, messageID uuid.UUID) (*model.Message, error)
 	UpdateMessageMeta(ctx context.Context, messageID uuid.UUID, meta datatypes.JSONType[map[string]interface{}]) error
 	CopySession(ctx context.Context, sessionID uuid.UUID) (*CopySessionResult, error)
+	HasUnfinishedMessages(ctx context.Context, sessionID uuid.UUID) (bool, error)
+	HasFailedMessages(ctx context.Context, sessionID uuid.UUID) (bool, error)
 }
 
 // CopySessionResult contains the result of a copy operation
@@ -600,4 +602,22 @@ func (r *sessionRepo) CopySession(ctx context.Context, sessionID uuid.UUID) (*Co
 	}
 
 	return &result, nil
+}
+
+func (r *sessionRepo) HasUnfinishedMessages(ctx context.Context, sessionID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.WithContext(ctx).Raw(
+		"SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ? AND session_task_process_status IN ('pending', 'running'))",
+		sessionID,
+	).Scan(&exists).Error
+	return exists, err
+}
+
+func (r *sessionRepo) HasFailedMessages(ctx context.Context, sessionID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.WithContext(ctx).Raw(
+		"SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ? AND session_task_process_status = 'failed')",
+		sessionID,
+	).Scan(&exists).Error
+	return exists, err
 }

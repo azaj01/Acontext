@@ -11,6 +11,7 @@ import (
 
 type TaskRepo interface {
 	ListBySessionWithCursor(ctx context.Context, sessionID uuid.UUID, afterCreatedAt time.Time, afterID uuid.UUID, limit int, timeDesc bool) ([]model.Task, error)
+	HasSuccessTask(ctx context.Context, sessionID uuid.UUID) (bool, error)
 }
 
 type taskRepo struct{ db *gorm.DB }
@@ -43,4 +44,13 @@ func (r *taskRepo) ListBySessionWithCursor(ctx context.Context, sessionID uuid.U
 
 	var items []model.Task
 	return items, q.Order(orderBy).Limit(limit).Find(&items).Error
+}
+
+func (r *taskRepo) HasSuccessTask(ctx context.Context, sessionID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.db.WithContext(ctx).Raw(
+		"SELECT EXISTS(SELECT 1 FROM tasks WHERE session_id = ? AND status = 'success')",
+		sessionID,
+	).Scan(&exists).Error
+	return exists, err
 }

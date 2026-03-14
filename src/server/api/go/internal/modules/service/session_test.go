@@ -113,6 +113,16 @@ func (m *MockSessionRepo) CopySession(ctx context.Context, sessionID uuid.UUID) 
 	return args.Get(0).(*repo.CopySessionResult), args.Error(1)
 }
 
+func (m *MockSessionRepo) HasUnfinishedMessages(ctx context.Context, sessionID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, sessionID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockSessionRepo) HasFailedMessages(ctx context.Context, sessionID uuid.UUID) (bool, error) {
+	args := m.Called(ctx, sessionID)
+	return args.Bool(0), args.Error(1)
+}
+
 // MockAssetReferenceRepo is a mock implementation of AssetReferenceRepo
 type MockAssetReferenceRepo struct {
 	mock.Mock
