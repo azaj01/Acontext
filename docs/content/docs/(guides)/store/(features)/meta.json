@@ -5,6 +5,7 @@
     "disk",
     "skill",
     "sandbox",
+    "session_events",
     "per-user",
     "../../engineering"
   ]

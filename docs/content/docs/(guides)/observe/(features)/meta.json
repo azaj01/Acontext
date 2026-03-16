@@ -3,7 +3,6 @@
   "pages": [
     "agent_tasks",
     "buffer",
-    "session_events",
     "disable_tasks",
     "task_eval_criteria",
     "dashboard",

@@ -1,63 +1,180 @@
 ---
 title: What is Task Tracking?
-description: "Automatic task tracking, progress recording, and session summaries — zero instrumentation"
+description: "Automatic task extraction, progress recording, and status detection from agent conversations — zero instrumentation"
 ---
 
-Store messages → Acontext automatically extracts tasks, tracks progress, and detects success/failure. No tracking code needed.
+Task tracking turns raw agent conversations into structured, queryable records of what the agent was asked to do, what it actually did, and whether it succeeded. You store messages as usual — Acontext handles the rest automatically. No tracking code, no manual annotations.
 
-## 30-Second Example
+## Why Task Tracking?
 
-Your agent stores a conversation where the user asks: *"Deploy the new API to staging"*
+When you run AI agents in production, you need answers to questions like:
 
-Acontext's background monitor extracts:
+- What tasks did my agent handle today?
+- Which tasks succeeded? Which failed? Why?
+- What steps did the agent take to complete each task?
+- What user preferences or constraints were mentioned?
+
+Task tracking gives you this observability out of the box. Every user request becomes a trackable task with status, progress, and metadata — all extracted automatically from the conversation.
+
+## How It Works
 
 ```
-Task: "Deploy the new API to staging"
+Your Agent                         Acontext
+    │                                  │
+    │  store_message(msg)              │
+    ├─────────────────────────────────►│  Messages saved to DB
+    │  store_message(msg)              │
+    ├─────────────────────────────────►│  Messages buffer accumulates
+    │  store_message(msg)              │
+    ├─────────────────────────────────►│
+    │                                  │
+    │           ┌──────────────────────┤  Buffer triggers (full or idle timeout)
+    │           │  Task Agent          │
+    │           │  (LLM-powered)       │
+    │           │                      │
+    │           │  • Reads messages    │
+    │           │  • Extracts tasks    │
+    │           │  • Records progress  │
+    │           │  • Detects status    │
+    │           └──────────────────────┤  Tasks written to DB
+    │                                  │
+    │  get_tasks(session_id)           │
+    ├─────────────────────────────────►│  Returns structured tasks
+    │◄─────────────────────────────────┤
+```
+
+### Step by step
+
+1. **You store messages** — call `store_message()` in your agent loop. Messages are saved to the database via the API.
+
+2. **Messages buffer** — Acontext batches messages before processing. The buffer flushes when it reaches a configured turn count (`buffer_max_turns`) or when no new messages arrive for a configured idle period (`buffer_ttl_seconds`). You can also call `flush()` to trigger processing immediately.
+
+3. **The Task Agent runs** — a background LLM-powered agent in Acontext Core reads the buffered messages and performs structured analysis:
+   - **Identifies user requests** — each distinct thing the user asks for becomes a separate task. The agent's sub-steps are recorded as progress within that task, not as separate tasks.
+   - **Tracks progress** — specific, concrete steps the agent took (e.g., "Created login component in `src/Login.tsx`", "Navigated to `https://example.com`").
+   - **Determines status** — `pending`, `running`, `success`, or `failed`, based on conversation signals or your [custom evaluation criteria](/observe/task_eval_criteria).
+   - **Captures user preferences** — constraints and preferences mentioned in conversation (e.g., "The user prefers TypeScript", "The user deploys to AWS").
+
+4. **Tasks are queryable** — retrieve structured tasks via SDK or view them in the Dashboard.
+
+## What Gets Tracked
+
+Each extracted task contains:
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| **Task description** | The user's request, in their words | "Deploy the new API to staging" |
+| **Status** | Current state of the task | `pending` → `running` → `success` or `failed` |
+| **Progress** | Step-by-step record of agent actions | "Built Docker image", "Pushed to registry", "Deployed to staging" |
+| **User preferences** | Constraints or preferences mentioned | "Always run tests before deploying" |
+| **Order** | Sequential position in the session | `1`, `2`, `3` |
+| **Linked messages** | Which messages belong to this task | Message IDs mapped to the task |
+
+## Example
+
+Your agent handles this conversation:
+
+> **User:** Deploy the new API to staging  
+> **Agent:** I'll build the Docker image first... Done. Now pushing to the registry... Pushed to `gcr.io/my-project/api:v2.1`. Deploying to the staging cluster... Deployment complete.
+
+Acontext automatically extracts:
+
+```
+Task #1: "Deploy the new API to staging"
 Status: success
 Progress:
   1. Built Docker image from Dockerfile
   2. Pushed to registry at gcr.io/my-project/api:v2.1
   3. Deployed to staging cluster via kubectl
-User preferences:
-  1. Always run tests before deploying
 ```
 
-You didn't write any of that. It came from the conversation automatically.
+No tracking code needed — it came from the conversation.
 
-## What Gets Tracked
+## Quick Usage
 
-| Field | Example |
-|-------|---------|
-| **Task** | "Deploy the new API to staging" |
-| **Status** | `pending` → `running` → `success` or `failed` |
-| **Progress** | Step-by-step record of what the agent did |
-| **User preferences** | Constraints the user mentioned |
+<CodeGroup>
+```python title="Python"
+import os
+from acontext import AcontextClient
 
-## Feeds Into Skill Memory
+client = AcontextClient(api_key=os.getenv("ACONTEXT_API_KEY"))
+session = client.sessions.create()
 
-Completed tasks feed into the [skill memory pipeline](/learn/quick):
+# Store messages as your agent runs
+client.sessions.store_message(session.id, blob={"role": "user", "content": "Deploy the new API to staging"}, format="openai")
+client.sessions.store_message(session.id, blob={"role": "assistant", "content": "Building Docker image... Done. Pushed to registry. Deployed to staging."}, format="openai")
 
-- **Success** → extracts the approach and generalizable patterns
-- **Failure** → extracts the failure point and prevention principles
+# Force processing (or wait for buffer to flush automatically)
+client.sessions.flush(session.id)
 
-These become reusable agent skills automatically.
+# Retrieve extracted tasks
+tasks = client.sessions.get_tasks(session.id)
+for task in tasks.items:
+    print(f"Task #{task.order}: {task.data.task_description}")
+    print(f"  Status: {task.status}")
+    for p in (task.data.progresses or []):
+        print(f"  - {p}")
+```
+
+```typescript title="TypeScript"
+import { AcontextClient } from '@acontext/acontext';
+
+const client = new AcontextClient({ apiKey: process.env.ACONTEXT_API_KEY });
+const session = await client.sessions.create();
+
+// Store messages as your agent runs
+await client.sessions.storeMessage(session.id, { role: "user", content: "Deploy the new API to staging" }, { format: "openai" });
+await client.sessions.storeMessage(session.id, { role: "assistant", content: "Building Docker image... Done. Pushed to registry. Deployed to staging." }, { format: "openai" });
+
+// Force processing (or wait for buffer to flush automatically)
+await client.sessions.flush(session.id);
+
+// Retrieve extracted tasks
+const tasks = await client.sessions.getTasks(session.id);
+for (const task of tasks.items) {
+    console.log(`Task #${task.order}: ${task.data.task_description}`);
+    console.log(`  Status: ${task.status}`);
+    for (const p of (task.data.progresses || [])) {
+        console.log(`  - ${p}`);
+    }
+}
+```
+</CodeGroup>
+
+## Disabling Task Tracking
+
+For sessions where you don't need task extraction (testing, simple Q&A, lightweight sub-agents), you can disable it per session:
+
+<CodeGroup>
+```python title="Python"
+session = client.sessions.create(disable_task_tracking=True)
+```
+
+```typescript title="TypeScript"
+const session = await client.sessions.create({ disableTaskTracking: true });
+```
+</CodeGroup>
+
+Messages are still saved — only the automatic task extraction is skipped.
+
+## Next Steps
 
 <CardGroup cols={2}>
 
 <Card title="Agent Tasks" icon="list-check" href="/observe/agent_tasks">
-Extract and query tasks via SDK.
+Full SDK reference for extracting and querying tasks.
 </Card>
 
 <Card title="Session Buffer" icon="clock" href="/observe/buffer">
 How message batching and processing timing works.
 </Card>
 
-<Card title="Dashboard" icon="chart-simple" href="/observe/dashboard">
-View messages, tasks, artifacts, and skills visually.
+<Card title="Task Evaluation Criteria" icon="scale-balanced" href="/observe/task_eval_criteria">
+Define custom success and failure standards for your domain.
 </Card>
 
-<Card title="Distributed Tracing" icon="wave-pulse" href="/observe/traces">
-Monitor request flows with OpenTelemetry and Jaeger.
+<Card title="Dashboard" icon="chart-simple" href="/observe/dashboard">
+View messages, tasks, and analytics visually.
 </Card>
 
 </CardGroup>
