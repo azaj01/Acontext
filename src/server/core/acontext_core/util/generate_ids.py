@@ -15,10 +15,10 @@ def track_process(func):
         func_name = func.__name__
         use_id = generate_temp_id()
         with bound_logging_vars(temp_id=use_id, func_name=func_name):
-            LOG.info(f"Enter {func_name}")
+            LOG.info("process.enter", func_name=func_name, temp_id=use_id)
             try:
                 return await func(*args, **kwargs)
             finally:
-                LOG.info(f"Exit {func_name}")
+                LOG.info("process.exit", func_name=func_name, temp_id=use_id)
 
     return wrapper

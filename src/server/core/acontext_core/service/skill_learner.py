@@ -6,6 +6,7 @@ from ..infra.async_mq import (
     Message,
     ConsumerConfigData,
 )
+from ..telemetry.log import get_wide_event
 from ..schema.mq.learning import SkillLearnTask, SkillLearnDistilled
 from .constants import EX, RK
 from .data import learning_space as LS
@@ -31,52 +32,49 @@ from .utils import (
     )
 )
 async def process_skill_distillation(body: SkillLearnTask, message: Message):
-    LOG.info(
-        f"Skill distillation: received task {body.task_id} for session {body.session_id}"
-    )
+    wide = get_wide_event()
 
-    # Resolve learning_space_id from session and mark as running
     async with DB_CLIENT.get_session_context() as db_session:
         r = await LS.get_learning_space_for_session(db_session, body.session_id)
         ls_session, eil = r.unpack()
         if eil or ls_session is None:
-            LOG.info(
-                f"Skill distillation: session {body.session_id} has no learning space, skipping"
-            )
+            if wide is not None:
+                wide["distillation_outcome"] = "skipped_no_learning_space"
             return
 
         await LS.update_session_status(db_session, body.session_id, "distilling")
 
     learning_space_id = ls_session.learning_space_id
+    if wide is not None:
+        wide["learning_space_id"] = str(learning_space_id)
+        wide["task_id"] = str(body.task_id)
 
-    # Run distillation (Steps 1-2)
     r = await SLC.process_context_distillation(
         body.project_id, body.session_id, body.task_id, learning_space_id
     )
     distilled_payload, eil = r.unpack()
     if eil:
-        LOG.warning(f"Skill distillation: failed for task {body.task_id}: {eil}")
+        if wide is not None:
+            wide["distillation_outcome"] = "failed"
         async with DB_CLIENT.get_session_context() as db_session:
             await LS.update_session_status(db_session, body.session_id, "failed")
         return
 
     if distilled_payload is None:
-        LOG.info(
-            f"Skill distillation: task {body.task_id} skipped (task not actionable or not worth learning)"
-        )
+        if wide is not None:
+            wide["distillation_outcome"] = "skipped_not_worth"
         async with DB_CLIENT.get_session_context() as db_session:
             await LS.update_session_status(db_session, body.session_id, "completed")
         return
 
-    # Publish distilled result to skill agent consumer
     await publish_mq(
         exchange_name=EX.learning_skill,
         routing_key=RK.learning_skill_agent,
         body=distilled_payload.model_dump_json(),
     )
-    LOG.info(
-        f"Skill distillation: published distilled context for learning space {learning_space_id}"
-    )
+    if wide is not None:
+        wide["distillation_outcome"] = "success"
+        wide["published_to_agent"] = True
 
 
 # =============================================================================
@@ -93,12 +91,11 @@ async def process_skill_distillation(body: SkillLearnTask, message: Message):
     )
 )
 async def process_skill_agent(body: SkillLearnDistilled, message: Message):
-    LOG.info(
-        f"Skill agent: received distilled context for session {body.session_id}, "
-        f"task {body.task_id}, learning space {body.learning_space_id}"
-    )
+    wide = get_wide_event()
 
     lock_key = f"skill_learn.{body.learning_space_id}"
+    if wide is not None:
+        wide["lock_key"] = lock_key
 
     _l = await check_redis_lock_or_set(
         body.project_id,
@@ -106,15 +103,18 @@ async def process_skill_agent(body: SkillLearnDistilled, message: Message):
         ttl_seconds=DEFAULT_CORE_CONFIG.skill_learn_lock_ttl_seconds,
     )
     if not _l:
-        LOG.info(
-            f"Skill agent: learning space {body.learning_space_id} is locked, pushing to Redis pending list"
-        )
+        if wide is not None:
+            wide["lock_acquired"] = False
+            wide["action"] = "pushed_to_pending"
         await push_skill_learn_pending(
             body.project_id, body.learning_space_id, body.model_dump_json()
         )
         async with DB_CLIENT.get_session_context() as db_session:
             await LS.update_session_status(db_session, body.session_id, "queued")
         return
+
+    if wide is not None:
+        wide["lock_acquired"] = True
 
     try:
         r = await SLC.run_skill_agent(
@@ -127,21 +127,23 @@ async def process_skill_agent(body: SkillLearnDistilled, message: Message):
         )
         drained_session_ids, eil = r.unpack()
         if eil:
-            LOG.warning(
-                f"Skill agent: processing failed for learning space {body.learning_space_id}: {eil}"
-            )
+            if wide is not None:
+                wide["agent_outcome"] = "failed"
             async with DB_CLIENT.get_session_context() as db_session:
                 await LS.update_session_status(db_session, body.session_id, "failed")
         else:
             all_session_ids = [body.session_id] + (drained_session_ids or [])
             all_session_ids = list(set(all_session_ids))
+            if wide is not None:
+                wide["agent_outcome"] = "success"
+                wide["sessions_completed"] = [str(s) for s in all_session_ids]
             async with DB_CLIENT.get_session_context() as db_session:
                 for sid in all_session_ids:
                     await LS.update_session_status(db_session, sid, "completed")
     except Exception as e:
-        LOG.error(
-            f"Skill agent: unhandled exception for learning space {body.learning_space_id}: {e}"
-        )
+        if wide is not None:
+            wide["agent_outcome"] = "error"
+            wide["error"] = {"type": type(e).__name__, "message": str(e)}
         async with DB_CLIENT.get_session_context() as db_session:
             await LS.update_session_status(db_session, body.session_id, "failed")
     finally:
@@ -156,13 +158,19 @@ async def process_skill_agent(body: SkillLearnDistilled, message: Message):
                     routing_key=RK.learning_skill_agent,
                     body=remaining[0].model_dump_json(),
                 )
-                LOG.info(
-                    f"Skill agent: re-triggered 1 pending context "
-                    f"for learning space {body.learning_space_id}"
-                )
-        except Exception:
+                if wide is not None:
+                    wide["retrigger_published"] = True
+                    wide["pending_remaining"] = 1
+            else:
+                if wide is not None:
+                    wide["retrigger_published"] = False
+                    wide["pending_remaining"] = 0
+        except Exception as e:
             LOG.error(
-                f"Skill agent: failed to retrigger pending contexts "
-                f"for learning space {body.learning_space_id}",
-                exc_info=True,
+                "skill_agent.retrigger_failed",
+                learning_space_id=str(body.learning_space_id),
+                error=str(e),
             )
+            if wide is not None:
+                wide["retrigger_published"] = False
+                wide["retrigger_error"] = str(e)

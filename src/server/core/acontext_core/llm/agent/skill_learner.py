@@ -2,7 +2,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from ...env import LOG, DEFAULT_CORE_CONFIG
-from ...telemetry.log import bound_logging_vars
+from ...telemetry.log import bound_logging_vars, get_wide_event
 from ...infra.db import DB_CLIENT
 from ...schema.result import Result
 from ...schema.utils import asUUID
@@ -11,7 +11,6 @@ from ..complete import llm_complete, response_to_sendable_message
 from ..prompt.skill_learner import SkillLearnerPrompt
 from ..tool.skill_learner_tools import SKILL_LEARNER_TOOLS
 from ..tool.skill_learner_lib.ctx import SkillLearnerCtx
-from ...util.generate_ids import track_process
 from ...service.data.learning_space import SkillInfo
 from ...service.data import learning_space as LS
 from ...service.utils import (
@@ -35,17 +34,14 @@ async def _refresh_skills(
         r = await LS.get_learning_space_skill_ids(db_session, learning_space_id)
         skill_ids, eil = r.unpack()
         if eil:
-            LOG.warning(f"Skill Learner: failed to refresh skill IDs: {eil}")
             return {}
         r = await LS.get_skills_info(db_session, skill_ids)
         skills_info, eil = r.unpack()
         if eil:
-            LOG.warning(f"Skill Learner: failed to refresh skills info: {eil}")
             return {}
     return {si.name: si for si in skills_info}
 
 
-@track_process
 async def skill_learner_agent(
     project_id: asUUID,
     learning_space_id: asUUID,
@@ -56,6 +52,7 @@ async def skill_learner_agent(
     lock_key: Optional[str] = None,
     lock_ttl_seconds: Optional[int] = None,
 ) -> Result[List[UUID]]:
+    wide = get_wide_event()
     skills = {si.name: si for si in skills_info}
     available_skills_str = _build_available_skills_str(skills)
 
@@ -63,23 +60,25 @@ async def skill_learner_agent(
     extra_iters = DEFAULT_CORE_CONFIG.skill_learn_extra_iterations_per_context_batch
     max_contexts = DEFAULT_CORE_CONFIG.skill_learn_max_contexts_per_agent_run
 
-    # Drain on entry — pick up leftovers from a crashed prior run + concurrent arrivals
     initial_pending = await drain_skill_learn_pending(
         project_id, learning_space_id, max_read=max_contexts
     )
     if initial_pending:
         drained_items.extend(initial_pending)
-        LOG.info(
-            f"Skill Learner: drained {len(initial_pending)} pending context(s) on entry"
-        )
+        if wide is not None:
+            wide["drained_count"] = len(initial_pending)
 
     json_tools = [tool.model_dump() for tool in SkillLearnerPrompt.tool_schema()]
     already_iterations = 0
     has_reported_thinking = False
+    llm_calls = 0
+    tools_called: list[str] = []
+    contexts_injected = 0
+    lock_renewed_count = 0
+
     _user_input = SkillLearnerPrompt.pack_skill_learner_input(
         distilled_context, available_skills_str, initial_pending or None
     )
-    LOG.info(f"Skill Learner Input:\n{_user_input}")
     _messages = [{"role": "user", "content": _user_input}]
 
     try:
@@ -93,11 +92,9 @@ async def skill_learner_agent(
             llm_return, eil = r.unpack()
             if eil:
                 raise RuntimeError(f"LLM call failed: {eil}")
+            llm_calls += 1
             _messages.append(response_to_sendable_message(llm_return))
-            _content_preview = (llm_return.content or "")[:20]
-            LOG.info(f"Skill Learner LLM Response: {_content_preview}...")
             if not llm_return.tool_calls:
-                LOG.info("Skill Learner: No tool calls found, stop iterations")
                 break
 
             use_tools = llm_return.tool_calls
@@ -130,10 +127,7 @@ async def skill_learner_agent(
                                     f"Tool {tool_name} rejected: {r.error}"
                                 )
                         if tool_name != "report_thinking":
-                            _t_preview = (t or "")[:20]
-                            LOG.info(
-                                f"Skill Learner Tool Call: {tool_name} -> {_t_preview}..."
-                            )
+                            tools_called.append(tool_name)
                         tool_response.append(
                             {
                                 "role": "tool",
@@ -161,10 +155,12 @@ async def skill_learner_agent(
                 )
                 if new_contexts:
                     drained_items.extend(new_contexts)
+                    contexts_injected += len(new_contexts)
                     skills = await _refresh_skills(learning_space_id)
                     available_skills_str = _build_available_skills_str(skills)
                     _new_context_input = SkillLearnerPrompt.pack_incoming_contexts(
-                        new_contexts, available_skills_str,
+                        new_contexts,
+                        available_skills_str,
                         count_bases=len(drained_items) - len(new_contexts),
                     )
                     _messages.append(
@@ -175,22 +171,15 @@ async def skill_learner_agent(
                     )
                     max_iterations += extra_iters
                     just_finish = False
-                    LOG.info(
-                        f"Skill Learner: injected {len(new_contexts)} new context(s) between iterations"
-                    )
 
-            # Check for pending contexts BEFORE honoring finish
             if just_finish:
-                LOG.info(
-                    "Skill Learner: finish called, no pending contexts — stopping."
-                )
                 break
 
             already_iterations += 1
 
-            # Renew lock TTL to prevent expiry during extended runs
             if lock_key and lock_ttl_seconds:
                 await renew_redis_lock(project_id, lock_key, lock_ttl_seconds)
+                lock_renewed_count += 1
 
     except BaseException as e:
         for item in drained_items:
@@ -200,12 +189,19 @@ async def skill_learner_agent(
                 )
             except Exception:
                 LOG.error(
-                    f"Skill Learner: failed to re-push drained item "
-                    f"{item.session_id} on error recovery",
-                    exc_info=True,
+                    "skill_learner.repush_failed",
+                    session_id=str(item.session_id),
                 )
         if isinstance(e, Exception):
             return Result.reject(str(e))
         raise
+
+    if wide is not None:
+        wide["agent_iterations"] = already_iterations
+        wide["llm_calls"] = llm_calls
+        wide["tools_called"] = tools_called
+        wide["contexts_injected"] = contexts_injected
+        wide["drained_total"] = len(drained_items)
+        wide["lock_renewed_count"] = lock_renewed_count
 
     return Result.resolve([item.session_id for item in drained_items])

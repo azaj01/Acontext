@@ -15,7 +15,11 @@ from aio_pika.exceptions import ChannelInvalidStateError
 from aio_pika.abc import AbstractConnection, AbstractChannel, AbstractQueue
 
 from ..env import LOG, DEFAULT_CORE_CONFIG
-from ..telemetry.log import bound_logging_vars
+from ..telemetry.log import (
+    bound_logging_vars,
+    set_wide_event,
+    clear_wide_event,
+)
 from ..util.handler_spec import check_handler_function_sanity, get_handler_body_type
 
 # OpenTelemetry imports for manual context propagation
@@ -39,10 +43,8 @@ def _extract_trace_context_from_headers(message: Message) -> Optional[Any]:
         if not config.enabled:
             return None
 
-        # Convert headers to string dict for propagation
         headers = {}
         for k, v in message.headers.items():
-            # aio_pika headers values can be various types
             if isinstance(v, (str, bytes)):
                 headers[k] = (
                     v if isinstance(v, str) else v.decode("utf-8", errors="ignore")
@@ -53,7 +55,7 @@ def _extract_trace_context_from_headers(message: Message) -> Optional[Any]:
         if headers:
             return propagate.extract(headers)
     except Exception:
-        pass  # If extraction fails, return None
+        pass
 
     return None
 
@@ -62,7 +64,21 @@ class SpecialHandler(StrEnum):
     NO_PROCESS = "no_process"
 
 
-LOGGING_FIELDS = {"project_id", "session_id"}
+LOGGING_FIELDS = {"project_id", "session_id", "task_id", "learning_space_id"}
+
+_FRAMEWORK_WIDE_EVENT_KEYS = frozenset(
+    {
+        "queue_name",
+        "handler",
+        "retry_attempt",
+        "outcome",
+        "error",
+        "validation_error",
+        "timeout_seconds",
+        "duration_ms",
+        "_log_level",
+    }
+)
 
 
 @dataclass
@@ -153,12 +169,10 @@ class AsyncSingleThreadMQConsumer:
 
     async def connect(self) -> None:
         """Establish connection to MQ"""
-        # Quick check without lock - if connection looks healthy, skip
         if self.connection and not self.connection.is_closed:
             return
 
         async with self._connection_lock:
-            # Double-check after acquiring lock
             if self.connection and not self.connection.is_closed:
                 return
 
@@ -172,11 +186,12 @@ class AsyncSingleThreadMQConsumer:
                     blocked_connection_timeout=self.connection_config.blocked_connection_timeout,
                 )
                 self._publish_channle = await self.connection.channel()
-                LOG.debug(
-                    f"Connected to MQ (connection: {self.connection_config.connection_name})"
+                LOG.info(
+                    "mq.connected",
+                    connection_name=self.connection_config.connection_name,
                 )
             except Exception as e:
-                LOG.error(f"Failed to connect to MQ: {str(e)}")
+                LOG.error("mq.connect_failed", error=str(e))
                 raise e
 
     async def disconnect(self) -> None:
@@ -187,7 +202,7 @@ class AsyncSingleThreadMQConsumer:
         if self.connection and not self.connection.is_closed:
             await self.connection.close()
             self.connection = None
-        LOG.info("Disconnected from MQ")
+        LOG.info("mq.disconnected")
 
     def register_consumer(self, consumer_config: ConsumerConfig) -> None:
         """Register a consumer at runtime"""
@@ -197,99 +212,105 @@ class AsyncSingleThreadMQConsumer:
             )
 
         self.consumers[consumer_config.queue_name] = consumer_config
-        LOG.debug(
-            f"Registered consumer - queue: {consumer_config.queue_name}, "
-            f"exchange: {consumer_config.exchange_name}, "
-            f"routing_key: {consumer_config.routing_key}"
-        )
 
     async def _process_message(
         self,
         config: ConsumerConfig,
         message: Message,
     ) -> None:
-        """Process a single message with retry logic."""
-        # Extract trace context from message headers for proper trace propagation
+        """Process a single message with retry logic and wide event emission."""
         extracted_context = _extract_trace_context_from_headers(message)
+
+        handler_name = (
+            config.handler.__name__ if callable(config.handler) else str(config.handler)
+        )
+        wide_event: dict = {
+            "queue_name": config.queue_name,
+            "handler": handler_name,
+        }
+        set_wide_event(wide_event)
+        _start_total = perf_counter()
 
         async with message.process(requeue=False, ignore_processed=True):
             retry_count = 0
             max_retries = config.max_retries
 
-            while retry_count <= max_retries:
-                try:
-                    # process the body to json
+            try:
+                while retry_count <= max_retries:
+                    handler_keys = set(wide_event.keys()) - _FRAMEWORK_WIDE_EVENT_KEYS
+                    for k in handler_keys:
+                        del wide_event[k]
+                    wide_event["retry_attempt"] = retry_count
+
                     try:
-                        payload = json.loads(message.body.decode("utf-8"))
-                        validated_body = config.body_pydantic_type.model_validate(
-                            payload
-                        )
-                        _logging_vars = {
-                            k: payload.get(k, None) for k in LOGGING_FIELDS
-                        }
-                        with bound_logging_vars(
-                            queue_name=config.queue_name, **_logging_vars
-                        ):
-                            # Attach extracted trace context for proper span hierarchy
-                            if extracted_context and OTEL_AVAILABLE:
-                                token = otel_context.attach(extracted_context)
-                                try:
-                                    _start_s = perf_counter()
+                        try:
+                            payload = json.loads(message.body.decode("utf-8"))
+                            validated_body = config.body_pydantic_type.model_validate(
+                                payload
+                            )
+                            _logging_vars = {
+                                k: payload.get(k, None) for k in LOGGING_FIELDS
+                            }
+                            with bound_logging_vars(
+                                queue_name=config.queue_name, **_logging_vars
+                            ):
+                                if extracted_context and OTEL_AVAILABLE:
+                                    token = otel_context.attach(extracted_context)
+                                    try:
+                                        await asyncio.wait_for(
+                                            config.handler(validated_body, message),
+                                            timeout=config.timeout,
+                                        )
+                                    finally:
+                                        otel_context.detach(token)
+                                else:
                                     await asyncio.wait_for(
                                         config.handler(validated_body, message),
                                         timeout=config.timeout,
                                     )
-                                    _end_s = perf_counter()
-                                finally:
-                                    otel_context.detach(token)
-                            else:
-                                _start_s = perf_counter()
-                                await asyncio.wait_for(
-                                    config.handler(validated_body, message),
-                                    timeout=config.timeout,
-                                )
-                                _end_s = perf_counter()
 
-                            LOG.debug(
-                                f"Queue: {config.queue_name} processed in {_end_s - _start_s:.4f}s"
+                                wide_event["outcome"] = "success"
+                        except ValidationError as e:
+                            wide_event["outcome"] = "validation_error"
+                            wide_event["validation_error"] = str(e)
+                            await message.reject(requeue=False)
+                            return
+                        except asyncio.TimeoutError:
+                            raise TimeoutError(
+                                f"Handler timeout after {config.timeout}s"
                             )
-                    except ValidationError as e:
-                        LOG.error(
-                            f"Message validation failed - queue: {config.queue_name}, "
-                            f"error: {str(e)}"
-                        )
-                        await message.reject(requeue=False)
+
                         return
-                    except asyncio.TimeoutError:
-                        raise TimeoutError(
-                            f"Handler timeout after {config.timeout}s - queue: {config.queue_name}"
-                        )
 
-                    # Success
-                    return
+                    except Exception as e:
+                        retry_count += 1
+                        _wait_for = config.retry_delay * (retry_count**2)
 
-                except Exception as e:
-                    retry_count += 1
-                    _wait_for = config.retry_delay * (retry_count**2)
-
-                    if retry_count <= max_retries:
-                        LOG.warning(
-                            f"Message processing unknown error - queue: {config.queue_name}, "
-                            f"attempt: {retry_count}/{config.max_retries}, "
-                            f"retry after {_wait_for}s, "
-                            f"error: {str(e)}.",
-                            extra={"traceback": traceback.format_exc()},
-                        )
-                        await asyncio.sleep(_wait_for)  # Exponential backoff
-                    else:
-                        LOG.error(
-                            f"Message processing failed permanently - queue: {config.queue_name}, "
-                            f"error: {str(e)}",
-                            extra={"traceback": traceback.format_exc()},
-                        )
-                        # goto DLX if any
-                        await message.reject(requeue=False)
-                        return
+                        if retry_count <= max_retries:
+                            wide_event["retry_attempt"] = retry_count
+                            wide_event["retry_wait_seconds"] = _wait_for
+                            await asyncio.sleep(_wait_for)
+                        else:
+                            if isinstance(e, TimeoutError):
+                                wide_event["outcome"] = "timeout"
+                                wide_event["timeout_seconds"] = config.timeout
+                            else:
+                                wide_event["outcome"] = "error"
+                            wide_event["error"] = {
+                                "type": type(e).__name__,
+                                "message": str(e),
+                            }
+                            await message.reject(requeue=False)
+                            return
+            finally:
+                wide_event["duration_ms"] = round(
+                    (perf_counter() - _start_total) * 1000, 2
+                )
+                _emit_level = wide_event.pop("_log_level", "info")
+                getattr(LOG, _emit_level, LOG.info)(
+                    "mq.message.processed", **wide_event
+                )
+                clear_wide_event()
 
     def cleanup_message_task(self, consumer_name: str, task: asyncio.Task) -> None:
         try:
@@ -297,16 +318,19 @@ class AsyncSingleThreadMQConsumer:
         except asyncio.CancelledError:
             pass
         except ChannelInvalidStateError as e:
-            LOG.warning(
-                f"{consumer_name}: Message channel invalid: {e}. {traceback.format_exc()}"
+            LOG.error(
+                "mq.channel_invalid",
+                consumer=consumer_name,
+                error=str(e),
             )
         except Exception as e:
             LOG.error(
-                f"{consumer_name}: Message task unknown error: {e}, {traceback.format_exc()}"
+                "mq.task_error",
+                consumer=consumer_name,
+                error=str(e),
             )
         finally:
             self._processing_tasks.discard(task)
-            LOG.debug(f"#Current Processing Tasks: {len(self._processing_tasks)}")
 
     async def _process_message_with_tracing(
         self, config: ConsumerConfig, message: Message
@@ -329,35 +353,28 @@ class AsyncSingleThreadMQConsumer:
         while not self._shutdown_event.is_set():
             consumer_channel: AbstractChannel | None = None
             try:
-                # Ensure connection is alive
                 if not self.connection or self.connection.is_closed:
                     LOG.warning(
-                        f"Connection lost for queue {config.queue_name}, reconnecting..."
+                        "mq.connection_lost",
+                        queue_name=config.queue_name,
                     )
                     await self.connect()
 
-                # Create a new channel for this consumer
                 consumer_channel = await self.connection.channel()
                 await consumer_channel.set_qos(prefetch_count=config.prefetch_count)
                 queue = await self._setup_consumer_on_channel(config, consumer_channel)
 
-                # Reset reconnect counter on successful setup
                 attempt = 0
 
                 if isinstance(config.handler, SpecialHandler):
                     hint = await self._special_queue(config)
                     return hint
 
-                LOG.debug(
-                    f"Looping consumer - queue: {config.queue_name} <- ({config.exchange_name}, {config.routing_key})"
-                )
-
                 async with queue.iterator() as queue_iter:
                     async for message in queue_iter:
                         if self._shutdown_event.is_set():
                             break
 
-                        # Process message in background task for concurrency
                         task = asyncio.create_task(
                             self._process_message_with_tracing(config, message)
                         )
@@ -369,26 +386,30 @@ class AsyncSingleThreadMQConsumer:
                             )
                         )
 
-                # If we exit the loop normally (shutdown), break the reconnect loop
                 if self._shutdown_event.is_set():
                     break
 
             except asyncio.CancelledError:
-                LOG.info(f"Consumer cancelled - queue: {config.queue_name}")
-                raise  # Re-raise to allow proper cancellation
+                LOG.info("mq.consumer_cancelled", queue_name=config.queue_name)
+                raise
             except Exception as e:
                 attempt += 1
                 if attempt > max_reconnect_attempts:
                     LOG.error(
-                        f"Consumer failed after {max_reconnect_attempts} reconnection attempts - "
-                        f"queue: {config.queue_name}, error: {str(e)}"
+                        "mq.consumer_failed",
+                        queue_name=config.queue_name,
+                        error=str(e),
+                        attempts=max_reconnect_attempts,
                     )
                     raise e
                 _delay_seconds = reconnect_delay * (attempt**2)
-                LOG.warning(
-                    f"Consumer error - queue: {config.queue_name}, error: {str(e)}, "
-                    f"attempt: {attempt}/{max_reconnect_attempts}, "
-                    f"reconnecting in {_delay_seconds}s..."
+                LOG.info(
+                    "mq.consumer_reconnecting",
+                    queue_name=config.queue_name,
+                    error=str(e),
+                    attempt=attempt,
+                    max_attempts=max_reconnect_attempts,
+                    delay_seconds=_delay_seconds,
                 )
                 await asyncio.sleep(_delay_seconds)
 
@@ -396,14 +417,8 @@ class AsyncSingleThreadMQConsumer:
                 if consumer_channel and not consumer_channel.is_closed:
                     try:
                         await consumer_channel.close()
-                        LOG.debug(
-                            f"Closed consumer channel - queue: {config.queue_name}"
-                        )
-                    except Exception as e:
-                        LOG.warning(
-                            f"Error closing channel - queue: {config.queue_name}: {e}"
-                        )
-                LOG.debug(f"Consumer channel closed - queue: {config.queue_name}")
+                    except Exception:
+                        pass
 
     async def _setup_consumer_on_channel(
         self,
@@ -411,15 +426,12 @@ class AsyncSingleThreadMQConsumer:
         channel: AbstractChannel,
     ) -> AbstractQueue:
         """Setup exchange, queue, and bindings for a consumer on a specific channel"""
-        # Declare exchange
         exchange = await channel.declare_exchange(
             config.exchange_name, config.exchange_type, durable=config.durable
         )
         queue_arguments: dict = {
             "x-message-ttl": config.message_ttl_seconds * 1000,
         }
-        # Setup dead letter exchange if specified
-        # TODO: implement dead-letter init
         if config.need_dlx_queue and config.use_dlx_ex_rk is None:
             dlx_exchange_name = f"{config.exchange_name}.{config.dlx_suffix}"
             dlx_routing_key = f"{config.routing_key}.{config.dlx_suffix}"
@@ -429,7 +441,6 @@ class AsyncSingleThreadMQConsumer:
                 dlx_exchange_name, ExchangeType.DIRECT, durable=True
             )
 
-            # Create dead letter queue
             dlq = await channel.declare_queue(
                 dlq_name,
                 durable=True,
@@ -441,11 +452,9 @@ class AsyncSingleThreadMQConsumer:
             queue_arguments["x-dead-letter-routing-key"] = dlx_routing_key
 
         if config.need_dlx_queue and config.use_dlx_ex_rk is not None:
-            LOG.debug(f"Queue {config.queue_name} uses DLX {config.use_dlx_ex_rk}")
             queue_arguments["x-dead-letter-exchange"] = config.use_dlx_ex_rk[0]
             queue_arguments["x-dead-letter-routing-key"] = config.use_dlx_ex_rk[1]
 
-        # Declare queue
         queue = await channel.declare_queue(
             config.queue_name,
             durable=config.durable,
@@ -453,7 +462,6 @@ class AsyncSingleThreadMQConsumer:
             arguments=queue_arguments,
         )
 
-        # Bind queue to exchange
         await queue.bind(exchange, config.routing_key)
 
         return queue
@@ -461,9 +469,8 @@ class AsyncSingleThreadMQConsumer:
     async def _force_reconnect(self) -> None:
         """Force a full reconnection, safely closing old connection if possible"""
         async with self._connection_lock:
-            LOG.warning("Forcing full MQ reconnection...")
+            LOG.info("mq.force_reconnect")
 
-            # Try to close the old connection gracefully
             old_connection = self.connection
             self._publish_channle = None
             self.connection = None
@@ -472,12 +479,9 @@ class AsyncSingleThreadMQConsumer:
                 try:
                     if not old_connection.is_closed:
                         await old_connection.close()
-                except Exception as e:
-                    # Ignore errors when closing a broken connection
-                    LOG.debug(f"Error closing old connection (ignored): {e}")
+                except Exception:
+                    pass
 
-            # Now reconnect - connect() will acquire the lock again, but that's okay
-            # since we're releasing it here. Actually, let's just do the connection inline.
             try:
                 self.connection = await connect_robust(
                     self.connection_config.url,
@@ -488,31 +492,28 @@ class AsyncSingleThreadMQConsumer:
                     blocked_connection_timeout=self.connection_config.blocked_connection_timeout,
                 )
                 self._publish_channle = await self.connection.channel()
-                LOG.info("MQ reconnection successful")
+                LOG.info("mq.reconnect_success")
             except Exception as e:
-                LOG.error(f"Failed to reconnect to MQ: {str(e)}")
+                LOG.error("mq.reconnect_failed", error=str(e))
                 raise
 
     async def _ensure_publish_channel(self) -> None:
         """Ensure we have a valid publish channel, reconnecting if necessary"""
-        # First ensure we have a connection
         if self.connection is None or self.connection.is_closed:
-            LOG.warning("Connection is closed, reconnecting...")
+            LOG.info("mq.publish_channel_reconnecting")
             self._publish_channle = None
             await self.connect()
             return
 
-        # Connection is open, check the channel
         if self._publish_channle is None or self._publish_channle.is_closed:
-            LOG.debug("Creating new publish channel...")
             try:
                 self._publish_channle = await self.connection.channel()
             except RuntimeError as e:
-                # Connection may report is_closed=False but actually be closed
-                # This is a known issue with aio_pika/aiormq
                 if "closed" in str(e).lower():
-                    LOG.warning(f"Connection appears open but is actually closed: {e}")
-                    # Force full reconnection with proper cleanup
+                    LOG.info(
+                        "mq.connection_stale",
+                        error=str(e),
+                    )
                     await self._force_reconnect()
                 else:
                     raise
@@ -521,7 +522,6 @@ class AsyncSingleThreadMQConsumer:
         """Publish a message to an exchange with OpenTelemetry tracing."""
         assert len(exchange_name) and len(routing_key)
 
-        # Create producer span using semantic conventions
         tracer = span = None
         if OTEL_AVAILABLE:
             try:
@@ -539,12 +539,10 @@ class AsyncSingleThreadMQConsumer:
                 span.set_attribute(
                     "messaging.message.body.size", len(body.encode("utf-8"))
                 )
-            except Exception as e:
-                LOG.debug(f"Failed to create producer span: {e}")
+            except Exception:
                 span = None
 
         try:
-            # Inject trace context into message headers
             headers = {}
             if OTEL_AVAILABLE:
                 try:
@@ -583,32 +581,28 @@ class AsyncSingleThreadMQConsumer:
                     exchange = await self._publish_channle.get_exchange(exchange_name)
                     await exchange.publish(message, routing_key=routing_key)
 
-                    LOG.debug(
-                        f"Published message to exchange: {exchange_name}, routing_key: {routing_key}"
-                    )
-
                     if span:
                         span.set_status(trace.Status(trace.StatusCode.OK))
-                    return  # Success, exit the retry loop
+                    return
 
                 except Exception as e:
                     last_exception = e
-                    # Check if it's a connection-related error that we should retry
                     is_connection_error = "closed" in str(e).lower() or isinstance(
                         e, (ConnectionError, RuntimeError)
                     )
 
                     if is_connection_error and attempt < max_retries - 1:
                         wait_time = retry_delay * (attempt + 1)
-                        LOG.warning(
-                            f"Publish failed (attempt {attempt + 1}/{max_retries}), "
-                            f"retrying in {wait_time}s: {str(e)}"
+                        LOG.info(
+                            "mq.publish_retry",
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                            wait_seconds=wait_time,
+                            error=str(e),
                         )
-                        # Reset channel to force reconnection on next attempt
                         self._publish_channle = None
                         await asyncio.sleep(wait_time)
                     else:
-                        # Either not a connection error or we've exhausted retries
                         if span:
                             span.record_exception(e)
                             span.set_status(
@@ -616,7 +610,6 @@ class AsyncSingleThreadMQConsumer:
                             )
                         raise
 
-            # If we get here, we've exhausted all retries (shouldn't happen due to raise above)
             if last_exception:
                 if span:
                     span.record_exception(last_exception)
@@ -628,7 +621,6 @@ class AsyncSingleThreadMQConsumer:
             if span:
                 span.end()
 
-    # TODO: add connection recovery logic
     async def start(self) -> None:
         """Start all registered consumers"""
         if self.running:
@@ -643,55 +635,45 @@ class AsyncSingleThreadMQConsumer:
         self.__running = True
         self._shutdown_event.clear()
 
-        # Start consumer tasks
         for config in self.consumers.values():
             task = asyncio.create_task(self._consume_queue(config))
             self._consumer_loop_tasks.append(task)
 
-        LOG.debug(f"Started all consumers (count: {len(self.consumers)})")
+        LOG.info("mq.consumers_started", count=len(self.consumers))
         try:
-            # Wait for shutdown signal or any task to complete
             while not self._shutdown_event.is_set():
-                # special handlers maybe return earlier
                 done, pending = await asyncio.wait(
                     self._consumer_loop_tasks
                     + [asyncio.create_task(self._shutdown_event.wait())],
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                # If shutdown event was triggered, tasks will be cancelled in stop()
                 for task in done:
                     try:
-                        r = (
-                            task.result()
-                        )  # This will raise the exception if task failed
+                        r = task.result()
                         if task in self._consumer_loop_tasks:
                             self._consumer_loop_tasks.remove(task)
-                            LOG.debug(
-                                f"Consumer task completed. {r}. Remaining tasks: {len(self._consumer_loop_tasks)}"
-                            )
                     except Exception as e:
                         LOG.error(
-                            f"Consumer task failed: {e}. Remaining tasks: {len(self._consumer_loop_tasks)}"
+                            "mq.consumer_task_failed",
+                            error=str(e),
+                            remaining=len(self._consumer_loop_tasks),
                         )
                         return
-            LOG.info("Shutdown event received")
+            LOG.info("mq.shutdown_received")
         finally:
             await self.stop()
 
     async def stop_current_tasks(self) -> None:
         self._shutdown_event.set()
-        # Cancel all consumer tasks
-        LOG.info(f"Stopping {len(self._consumer_loop_tasks)} consumers...")
+        LOG.info("mq.stopping_consumers", count=len(self._consumer_loop_tasks))
         for task in self._consumer_loop_tasks:
             task.cancel()
 
-        # Wait for tasks to complete
         if self._consumer_loop_tasks:
             await asyncio.gather(*self._consumer_loop_tasks, return_exceptions=True)
 
-        # Cancel all in-flight message processing tasks
-        LOG.info(f"Stopping {len(self._processing_tasks)} tasks...")
+        LOG.info("mq.stopping_tasks", count=len(self._processing_tasks))
         if self._processing_tasks:
             for task in list(self._processing_tasks):
                 task.cancel()
@@ -708,7 +690,7 @@ class AsyncSingleThreadMQConsumer:
 
             self.__running = False
             await self.disconnect()
-            LOG.info("All consumers stopped")
+            LOG.info("mq.all_stopped")
 
     async def health_check(self) -> bool:
         """Check if the consumer is healthy"""
@@ -726,7 +708,6 @@ MQ_CLIENT = AsyncSingleThreadMQConsumer(
 )
 
 
-# Decorator for easy handler registration
 def register_consumer(config: ConsumerConfigData):
     """Decorator to register a function as a message handler"""
 
@@ -745,9 +726,9 @@ async def publish_mq(exchange_name: str, routing_key: str, body: str) -> None:
 async def init_mq() -> None:
     """Initialize MQ connection (perform health check)."""
     if await MQ_CLIENT.health_check():
-        LOG.info("MQ connection initialized successfully")
+        LOG.info("mq.init_success")
     else:
-        LOG.error("Failed to initialize MQ connection")
+        LOG.error("mq.init_failed")
         raise ConnectionError("Could not connect to MQ")
     await MQ_CLIENT.connect()
 

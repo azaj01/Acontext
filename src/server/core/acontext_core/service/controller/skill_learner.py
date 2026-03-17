@@ -8,6 +8,7 @@ from ...schema.utils import asUUID
 from ...schema.session.task import TaskStatus
 from ...schema.session.message import MessageBlob
 from ...schema.mq.learning import SkillLearnDistilled
+from ...telemetry.log import get_wide_event
 from ..data import task as TD
 from ..data import message as MD
 from ..data import learning_space as LS
@@ -34,18 +35,25 @@ async def process_context_distillation(
     Returns a fully-formed SkillLearnDistilled payload on success.
     DB session is closed before returning — raw messages are freed from memory.
     """
-    # Step 1: Fetch target task, raw messages, session tasks, and skill descriptions
+    wide = get_wide_event()
+
     async with DB_CLIENT.get_session_context() as db_session:
         r = await TD.fetch_task(db_session, task_id)
         finished_task, eil = r.unpack()
         if eil:
+            if wide is not None:
+                wide["distill_outcome"] = "skipped_status"
+                wide["skip_reason"] = f"Task {task_id} not found (stale message)"
             return Result.reject(f"Task {task_id} not found (stale message)")
 
         if finished_task.status not in (TaskStatus.SUCCESS, TaskStatus.FAILED):
-            LOG.info(
-                f"Skill learning: task {task_id} is {finished_task.status}, skipping"
-            )
+            if wide is not None:
+                wide["distill_outcome"] = "skipped_status"
+                wide["task_status"] = str(finished_task.status)
             return Result.resolve(None)
+
+        if wide is not None:
+            wide["task_status"] = str(finished_task.status)
 
         r = await TD.fetch_current_tasks(db_session, session_id)
         all_tasks, eil = r.unpack()
@@ -54,12 +62,10 @@ async def process_context_distillation(
         if not all_tasks:
             return Result.reject("Session has no tasks")
 
-        # Fetch messages linked to this task
         task_messages = []
-        if not finished_task.raw_message_ids:
-            LOG.info(
-                f"Skill learning: task {task_id} has no raw messages, distilling from metadata only"
-            )
+        has_raw = bool(finished_task.raw_message_ids)
+        if wide is not None:
+            wide["has_raw_messages"] = has_raw
         if finished_task.raw_message_ids:
             r = await MD.fetch_messages_data_by_ids(
                 db_session, finished_task.raw_message_ids
@@ -73,7 +79,6 @@ async def process_context_distillation(
                     for m in messages
                 ]
 
-        # Fetch skill descriptions so distillation can assess relevance
         skill_descriptions = []
         r = await LS.get_learning_space_skill_ids(db_session, learning_space_id)
         skill_ids, eil = r.unpack()
@@ -84,8 +89,9 @@ async def process_context_distillation(
                 skill_descriptions = [
                     (si.name, si.description) for si in skills_info
                 ]
+                if wide is not None:
+                    wide["skill_count"] = len(skills_info)
 
-    # Step 2: Context Distillation
     if finished_task.status == TaskStatus.SUCCESS:
         tools = [
             DISTILL_SKIP_TOOL.model_dump(),
@@ -109,23 +115,30 @@ async def process_context_distillation(
     )
     llm_return, eil = r.unpack()
     if eil:
-        LOG.warning(f"Skill learning distillation LLM call failed: {eil}")
+        if wide is not None:
+            wide["distill_outcome"] = "llm_failed"
         return Result.reject(f"Distillation LLM call failed: {eil}")
 
     distillation_result = extract_distillation_result(llm_return)
     outcome, eil = distillation_result.unpack()
     if eil:
-        LOG.warning(f"Skill learning distillation extraction failed: {eil}")
+        if wide is not None:
+            wide["distill_outcome"] = "extraction_failed"
         return Result.reject(f"Distillation extraction failed: {eil}")
 
     if not outcome.is_worth_learning:
-        LOG.info(
-            f"Skill learning: task {task_id} not worth learning, "
-            f"reason: {outcome.skip_reason or 'not specified'}"
-        )
+        if wide is not None:
+            wide["distill_outcome"] = "skipped_not_worth"
+            wide["skip_reason"] = outcome.skip_reason or "not specified"
         return Result.resolve(None)
 
-    LOG.info(f"Skill learning distillation output:\n{outcome.distilled_text}")
+    LOG.info(
+        "distillation.output",
+        text=outcome.distilled_text[:200],
+    )
+
+    if wide is not None:
+        wide["distill_outcome"] = "success"
 
     return Result.resolve(
         SkillLearnDistilled(
@@ -151,7 +164,6 @@ async def run_skill_agent(
     Re-fetches LearningSpace to get user_id (not passed via MQ message).
     Returns drained session IDs on success so the consumer can mark them completed.
     """
-    # Step 3: Fetch learning space info and skills
     async with DB_CLIENT.get_session_context() as db_session:
         r = await LS.get_learning_space(db_session, learning_space_id)
         ls, eil = r.unpack()
@@ -170,7 +182,6 @@ async def run_skill_agent(
         if eil:
             return Result.reject(f"Failed to fetch skills info: {eil}")
 
-    # Step 4: Run skill learner agent
     r = await skill_learner_agent(
         project_id=project_id,
         learning_space_id=learning_space_id,

@@ -152,7 +152,7 @@ async def fetch_session_messages(
     result = await db_session.execute(query)
     message_ids = list(result.scalars().all())
 
-    LOG.info(f"Found {len(message_ids)} {status} messages")
+    LOG.info("messages.fetched", count=len(message_ids), status=status)
 
     if not message_ids:
         return Result.resolve([])

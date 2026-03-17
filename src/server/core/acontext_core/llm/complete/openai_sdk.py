@@ -61,9 +61,14 @@ async def openai_complete(
     _end_s = perf_counter()
     cached_tokens = getattr(response.usage.prompt_tokens_details, "cached_tokens", None)
     LOG.info(
-        f"LLM Complete: {prompt_id} {model}. "
-        f"cached {cached_tokens}, input {response.usage.prompt_tokens}, total {response.usage.total_tokens}, "
-        f"time {_end_s - _start_s:.4f}s"
+        "llm.complete",
+        prompt_id=prompt_id,
+        model=model,
+        cached_tokens=cached_tokens,
+        input_tokens=response.usage.prompt_tokens,
+        output_tokens=response.usage.completion_tokens,
+        total_tokens=response.usage.total_tokens,
+        duration_s=round(_end_s - _start_s, 4),
     )
 
     # Only support tool calls
@@ -87,7 +92,10 @@ async def openai_complete(
         try:
             json_content = json.loads(response.choices[0].message.content)
         except json.JSONDecodeError:
-            LOG.error(f"JSON decode error: {response.choices[0].message.content}")
+            LOG.error(
+                "llm.json_decode_error",
+                content=response.choices[0].message.content[:200],
+            )
             json_content = None
         llm_response.json_content = json_content
 

@@ -9,7 +9,10 @@ async def _thinking_handler(
     ctx: Any,
     llm_arguments: dict,
 ) -> Result[str]:
-    LOG.info(f"Agent reports its thinking: {llm_arguments.get('thinking', '...')}")
+    LOG.info(
+        "agent.thinking",
+        thinking=llm_arguments.get("thinking", "..."),
+    )
     return Result.resolve("thinking reported")
 
 

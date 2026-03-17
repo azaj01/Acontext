@@ -27,7 +27,7 @@ class CoreConfig(BaseModel):
     llm_simple_model: str = "gpt-4.1"
 
     # Core Configuration
-    logging_format: str = "text"
+    logging_format: str = "json"
     logging_level: str = "INFO"
     session_message_session_lock_wait_seconds: int = 1
     session_message_processing_timeout_seconds: int = 60

@@ -109,11 +109,14 @@ async def anthropic_complete(
         _end_s = perf_counter()
 
         LOG.info(
-            f"LLM Complete: {prompt_id} {model}. "
-            f"cached {response.usage.cache_read_input_tokens}, "
-            f"input {response.usage.input_tokens}, "
-            f"total {response.usage.input_tokens + response.usage.output_tokens}, "
-            f"time {_end_s - _start_s:.4f}s"
+            "llm.complete",
+            prompt_id=prompt_id,
+            model=model,
+            cached_tokens=response.usage.cache_read_input_tokens,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+            duration_s=round(_end_s - _start_s, 4),
         )
 
         # Extract content from response
@@ -147,11 +150,11 @@ async def anthropic_complete(
                 json_content = json.loads(content)
                 llm_response.json_content = json_content
             except json.JSONDecodeError:
-                LOG.error(f"JSON decode error: {content}")
+                LOG.error("llm.json_decode_error", content=content[:200])
                 llm_response.json_content = None
 
         return llm_response
 
     except Exception as e:
-        LOG.error(f"Anthropic completion failed: {str(e)}")
+        LOG.error("llm.complete_failed", error=str(e))
         raise e

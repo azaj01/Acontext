@@ -1,22 +1,73 @@
+import os
 import sys
 import logging
+import contextvars
 import structlog
-from ..util.terminal_color import TerminalColorMarks
 
 bound_logging_vars = structlog.contextvars.bound_contextvars
+
+_wide_event_var: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "wide_event", default=None
+)
+
+
+def set_wide_event(event: dict) -> None:
+    _wide_event_var.set(event)
+
+
+def get_wide_event() -> dict | None:
+    """Returns the current wide event dict, or None if not in an MQ handler context."""
+    return _wide_event_var.get()
+
+
+def clear_wide_event() -> None:
+    _wide_event_var.set(None)
 
 
 def get_logging_contextvars():
     return structlog.contextvars.get_contextvars()
 
 
-def __get_json_logger():
-    shared_processors = [
+def inject_otel_trace_context(
+    logger: logging.Logger, method_name: str, event_dict: dict
+) -> dict:
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        if span is not None:
+            ctx = span.get_span_context()
+            if ctx is not None and ctx.trace_id != 0:
+                event_dict["trace_id"] = format(ctx.trace_id, "032x")
+                event_dict["span_id"] = format(ctx.span_id, "016x")
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    return event_dict
+
+
+def _get_initial_values() -> dict:
+    initial = {
+        "service": os.environ.get("OTEL_SERVICE_NAME", "acontext-core"),
+    }
+    version = os.environ.get("OTEL_SERVICE_VERSION")
+    if version:
+        initial["version"] = version
+    commit_hash = os.environ.get("COMMIT_HASH") or os.environ.get("GIT_COMMIT")
+    if commit_hash:
+        initial["commit_hash"] = commit_hash
+    hostname = os.environ.get("HOSTNAME")
+    if hostname:
+        initial["hostname"] = hostname
+    return initial
+
+
+def __get_json_logger(level: int = logging.INFO) -> structlog.stdlib.BoundLogger:
+    shared_processors: list = [
         structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.stdlib.ExtraAdder(),
+        inject_otel_trace_context,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.CallsiteParameterAdder(
             [
@@ -26,14 +77,15 @@ def __get_json_logger():
         ),
     ]
 
-    structlog_processors = shared_processors + [
-        structlog.processors.dict_tracebacks,
-        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-    ]
-
     structlog.configure(
-        processors=structlog_processors,
-        logger_factory=structlog.stdlib.LoggerFactory(),
+        processors=shared_processors
+        + [
+            structlog.processors.dict_tracebacks,
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(level),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
         cache_logger_on_first_use=True,
     )
 
@@ -44,52 +96,69 @@ def __get_json_logger():
             structlog.processors.JSONRenderer(),
         ],
     )
-
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(formatter)
 
-    logger = logging.getLogger("acontext-core")
-    logger.addHandler(handler)
-    return logger
+    root = logging.getLogger()
+    if not any(
+        isinstance(h, logging.StreamHandler)
+        and getattr(h, "formatter", None).__class__
+        == structlog.stdlib.ProcessorFormatter
+        for h in root.handlers
+    ):
+        root.addHandler(handler)
+
+    return structlog.get_logger(**_get_initial_values())
 
 
-class ColoredFormatter(logging.Formatter):
-    """Custom formatter that applies different colors based on log level."""
+def __get_text_logger(level: int = logging.INFO) -> structlog.stdlib.BoundLogger:
+    shared_processors: list = [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        inject_otel_trace_context,
+        structlog.processors.TimeStamper(fmt="iso"),
+    ]
 
-    LEVEL_COLORS = {
-        logging.DEBUG: TerminalColorMarks.CYAN,
-        logging.INFO: TerminalColorMarks.BLUE,
-        logging.WARNING: TerminalColorMarks.YELLOW,
-        logging.ERROR: TerminalColorMarks.RED,
-        logging.CRITICAL: TerminalColorMarks.RED,
-    }
+    structlog.configure(
+        processors=shared_processors
+        + [
+            structlog.dev.ConsoleRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(level),
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
 
-    def format(self, record):
-        color = self.LEVEL_COLORS.get(record.levelno, TerminalColorMarks.BLUE)
-        levelname = f"{color}{record.levelname}{TerminalColorMarks.END}"
-
-        original_levelname = record.levelname
-        record.levelname = levelname
-        formatted = super().format(record)
-        record.levelname = original_levelname
-
-        return formatted
-
-
-def __get_text_logger():
-    logger = logging.getLogger("acontext-core")
-
-    formatter = ColoredFormatter("%(levelname)s - %(asctime)s - %(message)s")
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.dev.ConsoleRenderer(),
+        ],
+    )
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    return logger
+
+    root = logging.getLogger()
+    if not any(
+        isinstance(h, logging.StreamHandler)
+        and getattr(h, "formatter", None).__class__
+        == structlog.stdlib.ProcessorFormatter
+        for h in root.handlers
+    ):
+        root.addHandler(handler)
+
+    return structlog.get_logger(**_get_initial_values())
 
 
-def get_logger(format: str = "text", level: str = "INFO") -> logging.Logger:
+def get_logger(
+    format: str = "json", level: str = "INFO"
+) -> structlog.stdlib.BoundLogger:
+    level_int = logging.getLevelName(level)
     if format == "json":
-        LOG = __get_json_logger()
+        LOG = __get_json_logger(level_int)
     else:
-        LOG = __get_text_logger()
-    LOG.setLevel(level)
+        LOG = __get_text_logger(level_int)
+    logging.getLogger().setLevel(level_int)
     return LOG

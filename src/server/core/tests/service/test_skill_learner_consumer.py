@@ -956,7 +956,7 @@ class TestAgentConsumer:
             mock_release.assert_called_once()
             mock_publish.assert_not_called()
             mock_log.error.assert_called_once()
-            assert "failed to retrigger" in mock_log.error.call_args[0][0]
+            assert mock_log.error.call_args[0][0] == "skill_agent.retrigger_failed"
 
             completed_calls = [
                 c for c in mock_status.call_args_list if c[0][2] == "completed"
