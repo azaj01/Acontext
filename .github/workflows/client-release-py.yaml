@@ -21,8 +21,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -34,17 +32,28 @@ jobs:
         with:
           version: "latest"
 
-      - name: Extract version from tag
-        id: version
-        run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/sdk-py/v}
-          echo "version=$TAG_NAME" >> "$GITHUB_OUTPUT"
-
       - name: Build distribution
         run: uv build
 
       - name: Publish to PyPI
         run: uv publish
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: publish
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_NAME=${GITHUB_REF#refs/tags/sdk-py/v}
+          echo "version=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Generate Changelog
         run: |
