@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Generic, TypeVar, Type, Optional, Union
+from typing import Generic, TypeVar, Optional, Union
 from .error_code import Code
-from ..env import LOG
+from ..telemetry.log import get_wide_event
 
 T = TypeVar("T")
 
@@ -34,7 +34,10 @@ class Result(BaseModel, Generic[T]):
     @classmethod
     def reject(cls, errmsg: str, status: Code = Code.INTERNAL_ERROR) -> "Result[T]":
         assert status != Code.SUCCESS, "status must not be SUCCESS"
-        LOG.error(f"[{status}]: {errmsg}")
+        wide = get_wide_event()
+        wide.setdefault("errors", []).append(
+            {"status": str(status), "errmsg": errmsg}
+        )
         return cls(data=None, error=Error.init(status, errmsg))
 
     def unpack(self) -> Union[tuple[T, None], tuple[None, Error]]:

@@ -38,31 +38,27 @@ async def process_skill_distillation(body: SkillLearnTask, message: Message):
         r = await LS.get_learning_space_for_session(db_session, body.session_id)
         ls_session, eil = r.unpack()
         if eil or ls_session is None:
-            if wide is not None:
-                wide["distillation_outcome"] = "skipped_no_learning_space"
+            wide["distillation_outcome"] = "skipped_no_learning_space"
             return
 
         await LS.update_session_status(db_session, body.session_id, "distilling")
 
     learning_space_id = ls_session.learning_space_id
-    if wide is not None:
-        wide["learning_space_id"] = str(learning_space_id)
-        wide["task_id"] = str(body.task_id)
+    wide["learning_space_id"] = str(learning_space_id)
+    wide["task_id"] = str(body.task_id)
 
     r = await SLC.process_context_distillation(
         body.project_id, body.session_id, body.task_id, learning_space_id
     )
     distilled_payload, eil = r.unpack()
     if eil:
-        if wide is not None:
-            wide["distillation_outcome"] = "failed"
+        wide["distillation_outcome"] = "failed"
         async with DB_CLIENT.get_session_context() as db_session:
             await LS.update_session_status(db_session, body.session_id, "failed")
         return
 
     if distilled_payload is None:
-        if wide is not None:
-            wide["distillation_outcome"] = "skipped_not_worth"
+        wide["distillation_outcome"] = "skipped_not_worth"
         async with DB_CLIENT.get_session_context() as db_session:
             await LS.update_session_status(db_session, body.session_id, "completed")
         return
@@ -72,9 +68,8 @@ async def process_skill_distillation(body: SkillLearnTask, message: Message):
         routing_key=RK.learning_skill_agent,
         body=distilled_payload.model_dump_json(),
     )
-    if wide is not None:
-        wide["distillation_outcome"] = "success"
-        wide["published_to_agent"] = True
+    wide["distillation_outcome"] = "success"
+    wide["published_to_agent"] = True
 
 
 # =============================================================================
@@ -94,8 +89,7 @@ async def process_skill_agent(body: SkillLearnDistilled, message: Message):
     wide = get_wide_event()
 
     lock_key = f"skill_learn.{body.learning_space_id}"
-    if wide is not None:
-        wide["lock_key"] = lock_key
+    wide["lock_key"] = lock_key
 
     _l = await check_redis_lock_or_set(
         body.project_id,
@@ -103,9 +97,8 @@ async def process_skill_agent(body: SkillLearnDistilled, message: Message):
         ttl_seconds=DEFAULT_CORE_CONFIG.skill_learn_lock_ttl_seconds,
     )
     if not _l:
-        if wide is not None:
-            wide["lock_acquired"] = False
-            wide["action"] = "pushed_to_pending"
+        wide["lock_acquired"] = False
+        wide["action"] = "pushed_to_pending"
         await push_skill_learn_pending(
             body.project_id, body.learning_space_id, body.model_dump_json()
         )
@@ -113,8 +106,7 @@ async def process_skill_agent(body: SkillLearnDistilled, message: Message):
             await LS.update_session_status(db_session, body.session_id, "queued")
         return
 
-    if wide is not None:
-        wide["lock_acquired"] = True
+    wide["lock_acquired"] = True
 
     try:
         r = await SLC.run_skill_agent(
@@ -127,23 +119,20 @@ async def process_skill_agent(body: SkillLearnDistilled, message: Message):
         )
         drained_session_ids, eil = r.unpack()
         if eil:
-            if wide is not None:
-                wide["agent_outcome"] = "failed"
+            wide["agent_outcome"] = "failed"
             async with DB_CLIENT.get_session_context() as db_session:
                 await LS.update_session_status(db_session, body.session_id, "failed")
         else:
             all_session_ids = [body.session_id] + (drained_session_ids or [])
             all_session_ids = list(set(all_session_ids))
-            if wide is not None:
-                wide["agent_outcome"] = "success"
-                wide["sessions_completed"] = [str(s) for s in all_session_ids]
+            wide["agent_outcome"] = "success"
+            wide["sessions_completed"] = [str(s) for s in all_session_ids]
             async with DB_CLIENT.get_session_context() as db_session:
                 for sid in all_session_ids:
                     await LS.update_session_status(db_session, sid, "completed")
     except Exception as e:
-        if wide is not None:
-            wide["agent_outcome"] = "error"
-            wide["error"] = {"type": type(e).__name__, "message": str(e)}
+        wide["agent_outcome"] = "error"
+        wide["error"] = {"type": type(e).__name__, "message": str(e)}
         async with DB_CLIENT.get_session_context() as db_session:
             await LS.update_session_status(db_session, body.session_id, "failed")
     finally:
@@ -158,19 +147,16 @@ async def process_skill_agent(body: SkillLearnDistilled, message: Message):
                     routing_key=RK.learning_skill_agent,
                     body=remaining[0].model_dump_json(),
                 )
-                if wide is not None:
-                    wide["retrigger_published"] = True
-                    wide["pending_remaining"] = 1
+                wide["retrigger_published"] = True
+                wide["pending_remaining"] = 1
             else:
-                if wide is not None:
-                    wide["retrigger_published"] = False
-                    wide["pending_remaining"] = 0
+                wide["retrigger_published"] = False
+                wide["pending_remaining"] = 0
         except Exception as e:
             LOG.error(
                 "skill_agent.retrigger_failed",
                 learning_space_id=str(body.learning_space_id),
                 error=str(e),
             )
-            if wide is not None:
-                wide["retrigger_published"] = False
-                wide["retrigger_error"] = str(e)
+            wide["retrigger_published"] = False
+            wide["retrigger_error"] = str(e)

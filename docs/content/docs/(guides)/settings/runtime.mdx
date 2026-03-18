@@ -22,13 +22,6 @@ the longer context we can use for once for task maintaining,
 and the less total token costs.
 </ParamField>
 
-<ParamField path="PROJECT_SESSION_MESSAGE_BUFFER_TTL_SECONDS" type="integer" default="4">
-Time-to-live in seconds for the session buffer. 
-
-If the session buffer hasn't received any new messages for the TTL seconds, it starts processing the current messages.
-This parameter + the max turns parameters make sure the session buffer is not too large and the messages are not too old.
-</ParamField>
-
 ### Agent Iteration Limits
 
 <ParamField path="DEFAULT_TASK_AGENT_MAX_ITERATIONS" type="integer" default="4">
@@ -43,7 +36,6 @@ Maximum number of iterations a task agent can perform before stopping. Prevents 
 PROJECT_SESSION_MESSAGE_USE_PREVIOUS_MESSAGES_TURNS=3
 PROJECT_SESSION_MESSAGE_BUFFER_MAX_TURNS=16
 PROJECT_SESSION_MESSAGE_BUFFER_MAX_OVERFLOW=16
-PROJECT_SESSION_MESSAGE_BUFFER_TTL_SECONDS=4
 
 # Agent Limits
 DEFAULT_TASK_AGENT_MAX_ITERATIONS=4
@@ -54,7 +46,6 @@ DEFAULT_TASK_AGENT_MAX_ITERATIONS=4
 PROJECT_SESSION_MESSAGE_USE_PREVIOUS_MESSAGES_TURNS=8
 PROJECT_SESSION_MESSAGE_BUFFER_MAX_TURNS=32
 PROJECT_SESSION_MESSAGE_BUFFER_MAX_OVERFLOW=24
-PROJECT_SESSION_MESSAGE_BUFFER_TTL_SECONDS=10
 
 # More iterations for complex tasks
 DEFAULT_TASK_AGENT_MAX_ITERATIONS=8
@@ -65,7 +56,6 @@ DEFAULT_TASK_AGENT_MAX_ITERATIONS=8
 PROJECT_SESSION_MESSAGE_USE_PREVIOUS_MESSAGES_TURNS=2
 PROJECT_SESSION_MESSAGE_BUFFER_MAX_TURNS=8
 PROJECT_SESSION_MESSAGE_BUFFER_MAX_OVERFLOW=8
-PROJECT_SESSION_MESSAGE_BUFFER_TTL_SECONDS=2
 
 # Lower iteration limits for speed
 DEFAULT_TASK_AGENT_MAX_ITERATIONS=3
@@ -88,16 +78,10 @@ Setting iteration limits too high may lead to excessive API usage and longer res
   - ✅ **Lower token cost** - Batch processing with shared context
   - ❌ **Higher update latency** - Tasks and skills update less frequently
 
-### TTL Configuration Impact
-
-- **Short TTL** (1-4 seconds):
-  - ✅ **Near real-time** task extraction and skill updates
-  - ❌ **Higher costs** due to frequent processing of smaller batches
-  
-- **Long TTL** (10+ seconds):
-  - ✅ **Cost efficient** batch processing
-  - ❌ **Delayed updates** for tasks and skills
+<Note>
+The buffer idle timeout is fixed at 8 seconds and is not configurable per project. The buffer flushes when it reaches `BUFFER_MAX_TURNS` or when no new messages arrive for 8 seconds, whichever comes first.
+</Note>
 
 <Tip>
-For **development**: Use shorter TTL (2-4s) and smaller buffers (8-16) for faster feedback loops. For **production**: Use longer TTL (6-10s) and larger buffers (24-32) to optimize costs.
+For **development**: Use smaller buffers (8-16) for faster feedback loops. For **production**: Use larger buffers (24-32) to optimize costs.
 </Tip>

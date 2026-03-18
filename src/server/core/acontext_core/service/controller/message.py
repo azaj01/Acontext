@@ -37,19 +37,16 @@ async def process_session_pending_message(
             if not pending_message_ids:
                 return Result.resolve(None)
 
-            if wide is not None:
-                wide["pending_count"] = len(pending_message_ids)
+            wide["pending_count"] = len(pending_message_ids)
 
             if disabled:
-                if wide is not None:
-                    wide["project_disabled"] = True
+                wide["project_disabled"] = True
                 await MD.update_message_status_to(
                     session, pending_message_ids, TaskStatus.LIMIT_EXCEED
                 )
                 return Result.resolve(None)
 
-            if wide is not None:
-                wide["project_disabled"] = False
+            wide["project_disabled"] = False
 
             await MD.update_message_status_to(
                 session, pending_message_ids, TaskStatus.RUNNING
@@ -94,11 +91,9 @@ async def process_session_pending_message(
         after_status = TaskStatus.SUCCESS
         if not r.ok():
             after_status = TaskStatus.FAILED
-            if wide is not None:
-                wide["task_agent_outcome"] = "failed"
+            wide["task_agent_outcome"] = "failed"
         else:
-            if wide is not None:
-                wide["task_agent_outcome"] = "success"
+            wide["task_agent_outcome"] = "success"
 
         async with DB_CLIENT.get_session_context() as session:
             await MD.update_message_status_to(
@@ -113,8 +108,7 @@ async def process_session_pending_message(
             error=str(e),
             rollback_count=len(pending_message_ids),
         )
-        if wide is not None:
-            wide["task_agent_outcome"] = "exception"
+        wide["task_agent_outcome"] = "exception"
         async with DB_CLIENT.get_session_context() as session:
             await MD.update_message_status_to(
                 session, pending_message_ids, TaskStatus.FAILED

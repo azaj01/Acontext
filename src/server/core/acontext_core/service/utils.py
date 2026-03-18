@@ -81,21 +81,3 @@ async def drain_skill_learn_pending(
     return [SkillLearnDistilled.model_validate_json(item) for item in items]
 
 
-async def check_buffer_timer_or_set(
-    project_id: asUUID, session_id: asUUID, ttl_seconds: int
-) -> bool:
-    """
-    Check if a buffer timer already exists for this session. If not, set one.
-
-    Returns True if the key was newly set (caller should create the timer),
-    False if the key already existed (timer already scheduled).
-    """
-    key = f"buffer_timer.{project_id}.{session_id}"
-    async with REDIS_CLIENT.get_client_context() as client:
-        result = await client.set(
-            key,
-            "1",
-            nx=True,
-            ex=ttl_seconds,
-        )
-        return result is not None

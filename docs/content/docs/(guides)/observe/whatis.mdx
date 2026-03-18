@@ -47,7 +47,7 @@ Your Agent                         Acontext
 
 1. **You store messages** — call `store_message()` in your agent loop. Messages are saved to the database via the API.
 
-2. **Messages buffer** — Acontext batches messages before processing. The buffer flushes when it reaches a configured turn count (`buffer_max_turns`) or when no new messages arrive for a configured idle period (`buffer_ttl_seconds`). You can also call `flush()` to trigger processing immediately.
+2. **Messages buffer** — Acontext batches messages before processing. The buffer flushes when it reaches a configured turn count (`buffer_max_turns`) or when no new messages arrive for 8 seconds. You can also call `flush()` to trigger processing immediately.
 
 3. **The Task Agent runs** — a background LLM-powered agent in Acontext Core reads the buffered messages and performs structured analysis:
    - **Identifies user requests** — each distinct thing the user asks for becomes a separate task. The agent's sub-steps are recorded as progress within that task, not as separate tasks.

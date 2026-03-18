@@ -5,6 +5,6 @@ from ..utils import asUUID
 class InsertNewMessage(BaseModel):
     project_id: asUUID
     session_id: asUUID
-    message_id: asUUID
-    skip_latest_check: bool = False
+    message_id: asUUID  # sent by API but unused by handler
+    process_rightnow: bool = False
     lock_retry_count: int = 0

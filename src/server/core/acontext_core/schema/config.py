@@ -8,7 +8,6 @@ class ProjectConfig(BaseModel):
     project_session_message_use_previous_messages_turns: int = 3
     project_session_message_buffer_max_turns: int = 16
     project_session_message_buffer_max_overflow: int = 16
-    project_session_message_buffer_ttl_seconds: int = 8  # 4 seconds
     default_task_agent_max_iterations: int = 6
     default_task_agent_previous_progress_num: int = 6
     task_success_criteria: Optional[str] = None
@@ -30,6 +29,7 @@ class CoreConfig(BaseModel):
     logging_format: str = "json"
     logging_level: str = "INFO"
     session_message_session_lock_wait_seconds: int = 1
+    session_message_buffer_default_ttl_seconds: int = 8
     session_message_processing_timeout_seconds: int = 60
     session_message_flush_max_retries: int = 60
     skill_learn_agent_max_iterations: int = 24

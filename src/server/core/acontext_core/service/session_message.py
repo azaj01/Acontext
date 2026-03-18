@@ -19,28 +19,7 @@ from .controller import message as MC
 from .utils import (
     check_redis_lock_or_set,
     release_redis_lock,
-    check_buffer_timer_or_set,
 )
-
-
-async def waiting_for_message_notify(wait_for_seconds: int, body: InsertNewMessage):
-    LOG.debug(
-        "session.buffer_timer_waiting",
-        session_id=str(body.session_id),
-        wait_seconds=wait_for_seconds,
-    )
-    await asyncio.sleep(wait_for_seconds)
-    timer_body = InsertNewMessage(
-        project_id=body.project_id,
-        session_id=body.session_id,
-        message_id=body.message_id,
-        skip_latest_check=True,
-    )
-    await publish_mq(
-        exchange_name=EX.session_message,
-        routing_key=RK.session_message_buffer_process,
-        body=timer_body.model_dump_json(),
-    )
 
 
 @register_consumer(
@@ -53,67 +32,46 @@ async def waiting_for_message_notify(wait_for_seconds: int, body: InsertNewMessa
 async def insert_new_message(body: InsertNewMessage, message: Message):
     wide = get_wide_event()
 
-    async with DB_CLIENT.get_session_context() as read_session:
-        r = await MD.get_message_ids(read_session, body.session_id)
-        message_ids, eil = r.unpack()
-        if eil:
-            return
-        if not len(message_ids):
-            if wide is not None:
-                wide["action"] = "skip_no_pending"
-                wide["_log_level"] = "debug"
-            return
-        latest_pending_message_id = message_ids[0]
-        if not body.skip_latest_check and body.message_id != latest_pending_message_id:
-            if wide is not None:
-                wide["action"] = "skip_not_latest"
-                wide["_log_level"] = "debug"
+    async with DB_CLIENT.get_session_context() as session:
+        r = await MD.check_session_message_status(session, body.message_id)
+        msg_status, eil = r.unpack()
+        if eil or msg_status != "pending":
+            wide["action"] = "skip_not_pending"
             return
 
-        r = await PD.get_project_config(read_session, body.project_id)
+        r = await PD.get_project_config(session, body.project_id)
         project_config, eil = r.unpack()
         if eil:
             return
 
-        r = await MD.session_message_length(read_session, body.session_id)
-        pending_message_length, eil = r.unpack()
+        r = await MD.session_message_length(session, body.session_id)
+        pending_count, eil = r.unpack()
         if eil:
             return
 
-        if wide is not None:
-            wide["pending_message_count"] = pending_message_length
+    wide["pending_message_count"] = pending_count
 
-        if (
-            pending_message_length
-            < project_config.project_session_message_buffer_max_turns
-        ):
-            should_create_timer = await check_buffer_timer_or_set(
-                body.project_id,
-                body.session_id,
-                project_config.project_session_message_buffer_ttl_seconds,
-            )
-            if wide is not None:
-                wide["timer_created"] = should_create_timer
-                wide["action"] = "timer_wait"
-                wide["_log_level"] = "debug"
-            if should_create_timer:
-                asyncio.create_task(
-                    waiting_for_message_notify(
-                        project_config.project_session_message_buffer_ttl_seconds,
-                        body,
-                    )
-                )
-            return
+    if (
+        not body.process_rightnow
+        and pending_count < project_config.project_session_message_buffer_max_turns
+    ):
+        wide["action"] = "buffer_wait"
+        wide["_log_level"] = "debug"
+        body.process_rightnow = True
+        await publish_mq(
+            exchange_name=EX.session_message,
+            routing_key=RK.session_message_insert_delay,
+            body=body.model_dump_json(),
+        )
+        return
 
-    body.skip_latest_check = False
     _l = await check_redis_lock_or_set(
         body.project_id, f"session.message.insert.{body.session_id}"
     )
     if not _l:
-        if wide is not None:
-            wide["lock_acquired"] = False
-            wide["action"] = "retry_locked"
-            wide["_log_level"] = "debug"
+        wide["lock_acquired"] = False
+        wide["action"] = "retry_locked"
+        wide["_log_level"] = "debug"
         body.lock_retry_count += 1
         await publish_mq(
             exchange_name=EX.session_message,
@@ -122,27 +80,23 @@ async def insert_new_message(body: InsertNewMessage, message: Message):
         )
         return
 
-    if wide is not None:
-        wide["lock_acquired"] = True
-        wide["lock_retries"] = body.lock_retry_count
-        wide["buffer_full"] = True
-
+    wide["lock_acquired"] = True
+    wide["lock_retries"] = body.lock_retry_count
+    wide["process_rightnow"] = body.process_rightnow
     try:
-        if pending_message_length > (
+        if pending_count > (
             project_config.project_session_message_buffer_max_overflow
             + project_config.project_session_message_buffer_max_turns
         ):
-            if wide is not None:
-                wide["buffer_overflow"] = True
-                wide["action"] = "overflow_truncate"
+            wide["buffer_overflow"] = True
+            wide["action"] = "overflow_truncate"
             await publish_mq(
                 exchange_name=EX.session_message,
                 routing_key=RK.session_message_insert_retry,
                 body=body.model_dump_json(),
             )
         else:
-            if wide is not None:
-                wide["action"] = "process"
+            wide["action"] = "process"
         await MC.process_session_pending_message(
             project_config, body.project_id, body.session_id
         )
@@ -152,6 +106,21 @@ async def insert_new_message(body: InsertNewMessage, message: Message):
         )
 
 
+# Delay queue: holds messages for buffer_ttl seconds, then DLX back to entry.
+# Replaces the asyncio.create_task timer — survives restarts, no fire-and-forget.
+register_consumer(
+    config=ConsumerConfigData(
+        exchange_name=EX.session_message,
+        routing_key=RK.session_message_insert_delay,
+        queue_name="session.message.insert.delay",
+        message_ttl_seconds=DEFAULT_CORE_CONFIG.session_message_buffer_default_ttl_seconds,
+        need_dlx_queue=True,
+        use_dlx_ex_rk=(EX.session_message, RK.session_message_insert),
+    )
+)(SpecialHandler.NO_PROCESS)
+
+
+# Retry queue: holds messages for lock_wait seconds, then DLX back to entry.
 register_consumer(
     config=ConsumerConfigData(
         exchange_name=EX.session_message,
@@ -162,71 +131,6 @@ register_consumer(
         use_dlx_ex_rk=(EX.session_message, RK.session_message_insert),
     )
 )(SpecialHandler.NO_PROCESS)
-
-
-@register_consumer(
-    config=ConsumerConfigData(
-        exchange_name=EX.session_message,
-        routing_key=RK.session_message_buffer_process,
-        queue_name="session.message.buffer.process",
-    )
-)
-async def buffer_new_message(body: InsertNewMessage, message: Message):
-    wide = get_wide_event()
-
-    async with DB_CLIENT.get_session_context() as session:
-        r = await MD.get_message_ids(session, body.session_id)
-        message_ids, eil = r.unpack()
-        if eil:
-            return
-        if not len(message_ids):
-            if wide is not None:
-                wide["action"] = "skip_no_pending"
-                wide["_log_level"] = "debug"
-            return
-        latest_pending_message_id = message_ids[0]
-        if not body.skip_latest_check and body.message_id != latest_pending_message_id:
-            if wide is not None:
-                wide["action"] = "skip_not_latest"
-                wide["_log_level"] = "debug"
-            return
-        r = await PD.get_project_config(session, body.project_id)
-        project_config, eil = r.unpack()
-        if eil:
-            return
-
-    if wide is not None:
-        wide["action"] = "process"
-
-    body.skip_latest_check = False
-    _l = await check_redis_lock_or_set(
-        body.project_id, f"session.message.insert.{body.session_id}"
-    )
-    if not _l:
-        if wide is not None:
-            wide["lock_acquired"] = False
-            wide["action"] = "retry_locked"
-            wide["_log_level"] = "debug"
-        body.lock_retry_count += 1
-        await publish_mq(
-            exchange_name=EX.session_message,
-            routing_key=RK.session_message_insert_retry,
-            body=body.model_dump_json(),
-        )
-        return
-
-    if wide is not None:
-        wide["lock_acquired"] = True
-        wide["lock_retries"] = body.lock_retry_count
-
-    try:
-        await MC.process_session_pending_message(
-            project_config, body.project_id, body.session_id
-        )
-    finally:
-        await release_redis_lock(
-            body.project_id, f"session.message.insert.{body.session_id}"
-        )
 
 
 async def flush_session_message_blocking(
@@ -276,12 +180,8 @@ async def flush_session_message_blocking(
             wide_event["outcome"] = "success" if r.ok() else "failed"
             return r
         finally:
-            await release_redis_lock(
-                project_id, f"session.message.insert.{session_id}"
-            )
+            await release_redis_lock(project_id, f"session.message.insert.{session_id}")
     finally:
-        wide_event["duration_ms"] = round(
-            (perf_counter() - _start) * 1000, 2
-        )
+        wide_event["duration_ms"] = round((perf_counter() - _start) * 1000, 2)
         LOG.info("flush.message.processed", **wide_event)
         clear_wide_event()

@@ -54,7 +54,6 @@ async def create_test_project(conn) -> ProjectCredentials:
     
     configs = {
         "project_session_message_buffer_max_turns": 1,
-        "project_session_message_buffer_ttl_seconds": 2
     }
     
     await conn.execute(

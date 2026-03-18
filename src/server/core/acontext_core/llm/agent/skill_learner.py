@@ -65,8 +65,7 @@ async def skill_learner_agent(
     )
     if initial_pending:
         drained_items.extend(initial_pending)
-        if wide is not None:
-            wide["drained_count"] = len(initial_pending)
+        wide["drained_count"] = len(initial_pending)
 
     json_tools = [tool.model_dump() for tool in SkillLearnerPrompt.tool_schema()]
     already_iterations = 0
@@ -196,12 +195,11 @@ async def skill_learner_agent(
             return Result.reject(str(e))
         raise
 
-    if wide is not None:
-        wide["agent_iterations"] = already_iterations
-        wide["llm_calls"] = llm_calls
-        wide["tools_called"] = tools_called
-        wide["contexts_injected"] = contexts_injected
-        wide["drained_total"] = len(drained_items)
-        wide["lock_renewed_count"] = lock_renewed_count
+    wide["agent_iterations"] = already_iterations
+    wide["llm_calls"] = llm_calls
+    wide["tools_called"] = tools_called
+    wide["contexts_injected"] = contexts_injected
+    wide["drained_total"] = len(drained_items)
+    wide["lock_renewed_count"] = lock_renewed_count
 
     return Result.resolve([item.session_id for item in drained_items])

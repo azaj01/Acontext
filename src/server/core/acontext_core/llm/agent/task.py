@@ -289,10 +289,9 @@ async def task_agent_curd(
             break
         already_iterations += 1
 
-    if wide is not None:
-        wide["agent_iterations"] = already_iterations
-        wide["llm_calls"] = llm_calls
-        wide["tools_called"] = tools_called
-        wide["task_count"] = task_count
+    wide["agent_iterations"] = already_iterations
+    wide["llm_calls"] = llm_calls
+    wide["tools_called"] = tools_called
+    wide["task_count"] = task_count
 
     return Result.resolve(None)

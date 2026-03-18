@@ -41,19 +41,16 @@ async def process_context_distillation(
         r = await TD.fetch_task(db_session, task_id)
         finished_task, eil = r.unpack()
         if eil:
-            if wide is not None:
-                wide["distill_outcome"] = "skipped_status"
-                wide["skip_reason"] = f"Task {task_id} not found (stale message)"
+            wide["distill_outcome"] = "skipped_status"
+            wide["skip_reason"] = f"Task {task_id} not found (stale message)"
             return Result.reject(f"Task {task_id} not found (stale message)")
 
         if finished_task.status not in (TaskStatus.SUCCESS, TaskStatus.FAILED):
-            if wide is not None:
-                wide["distill_outcome"] = "skipped_status"
-                wide["task_status"] = str(finished_task.status)
+            wide["distill_outcome"] = "skipped_status"
+            wide["task_status"] = str(finished_task.status)
             return Result.resolve(None)
 
-        if wide is not None:
-            wide["task_status"] = str(finished_task.status)
+        wide["task_status"] = str(finished_task.status)
 
         r = await TD.fetch_current_tasks(db_session, session_id)
         all_tasks, eil = r.unpack()
@@ -64,8 +61,7 @@ async def process_context_distillation(
 
         task_messages = []
         has_raw = bool(finished_task.raw_message_ids)
-        if wide is not None:
-            wide["has_raw_messages"] = has_raw
+        wide["has_raw_messages"] = has_raw
         if finished_task.raw_message_ids:
             r = await MD.fetch_messages_data_by_ids(
                 db_session, finished_task.raw_message_ids
@@ -89,8 +85,7 @@ async def process_context_distillation(
                 skill_descriptions = [
                     (si.name, si.description) for si in skills_info
                 ]
-                if wide is not None:
-                    wide["skill_count"] = len(skills_info)
+                wide["skill_count"] = len(skills_info)
 
     if finished_task.status == TaskStatus.SUCCESS:
         tools = [
@@ -115,21 +110,18 @@ async def process_context_distillation(
     )
     llm_return, eil = r.unpack()
     if eil:
-        if wide is not None:
-            wide["distill_outcome"] = "llm_failed"
+        wide["distill_outcome"] = "llm_failed"
         return Result.reject(f"Distillation LLM call failed: {eil}")
 
     distillation_result = extract_distillation_result(llm_return)
     outcome, eil = distillation_result.unpack()
     if eil:
-        if wide is not None:
-            wide["distill_outcome"] = "extraction_failed"
+        wide["distill_outcome"] = "extraction_failed"
         return Result.reject(f"Distillation extraction failed: {eil}")
 
     if not outcome.is_worth_learning:
-        if wide is not None:
-            wide["distill_outcome"] = "skipped_not_worth"
-            wide["skip_reason"] = outcome.skip_reason or "not specified"
+        wide["distill_outcome"] = "skipped_not_worth"
+        wide["skip_reason"] = outcome.skip_reason or "not specified"
         return Result.resolve(None)
 
     LOG.info(
@@ -137,8 +129,7 @@ async def process_context_distillation(
         text=outcome.distilled_text[:200],
     )
 
-    if wide is not None:
-        wide["distill_outcome"] = "success"
+    wide["distill_outcome"] = "success"
 
     return Result.resolve(
         SkillLearnDistilled(

@@ -15,9 +15,14 @@ def set_wide_event(event: dict) -> None:
     _wide_event_var.set(event)
 
 
-def get_wide_event() -> dict | None:
-    """Returns the current wide event dict, or None if not in an MQ handler context."""
-    return _wide_event_var.get()
+def get_wide_event() -> dict:
+    """Returns the current wide event dict.
+
+    If not in an MQ handler context, returns a throwaway empty dict so callers
+    can unconditionally write ``wide["key"] = val`` without None-checks.
+    """
+    val = _wide_event_var.get()
+    return val if val is not None else {}
 
 
 def clear_wide_event() -> None:
