@@ -189,6 +189,7 @@ async def task_agent_curd(
                 for tool_call in use_tools:
                     try:
                         tool_name = tool_call.function.name
+                        tools_called.append(tool_name)
                         if tool_name == "finish":
                             just_finish = True
                             continue
@@ -208,8 +209,6 @@ async def task_agent_curd(
                                 raise RuntimeError(
                                     f"Tool {tool_name} rejected: {r.error}"
                                 )
-                        if tool_name != "report_thinking":
-                            tools_called.append(tool_name)
                         tool_response.append(
                             {
                                 "role": "tool",

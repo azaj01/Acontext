@@ -6,6 +6,7 @@ from openai.types.chat import ChatCompletionMessageToolCall
 from time import perf_counter
 from ...env import LOG, DEFAULT_CORE_CONFIG
 from ...schema.llm import LLMResponse
+from ...telemetry.log import get_wide_event
 
 
 def convert_openai_tool_to_llm_tool(tool_body: ChatCompletionMessageToolCall) -> dict:
@@ -59,15 +60,23 @@ async def openai_complete(
         **kwargs,
     )
     _end_s = perf_counter()
-    cached_tokens = getattr(response.usage.prompt_tokens_details, "cached_tokens", None)
+    _input = response.usage.prompt_tokens
+    _output = response.usage.completion_tokens
+    _cached = getattr(response.usage.prompt_tokens_details, "cached_tokens", None) or 0
+
+    wide = get_wide_event()
+    wide["llm_input_tokens"] = wide.get("llm_input_tokens", 0) + _input
+    wide["llm_output_tokens"] = wide.get("llm_output_tokens", 0) + _output
+    wide["llm_cached_tokens"] = wide.get("llm_cached_tokens", 0) + _cached
+
     LOG.info(
         "llm.complete",
         prompt_id=prompt_id,
         model=model,
-        cached_tokens=cached_tokens,
-        input_tokens=response.usage.prompt_tokens,
-        output_tokens=response.usage.completion_tokens,
-        total_tokens=response.usage.total_tokens,
+        cached_tokens=_cached,
+        input_tokens=_input,
+        output_tokens=_output,
+        total_tokens=_input + _output,
         duration_s=round(_end_s - _start_s, 4),
     )
 

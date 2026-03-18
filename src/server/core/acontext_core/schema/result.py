@@ -1,9 +1,21 @@
+import sys
 from pydantic import BaseModel, ConfigDict
 from typing import Generic, TypeVar, Optional, Union
 from .error_code import Code
 from ..telemetry.log import get_wide_event
 
 T = TypeVar("T")
+
+
+def _caller_name(depth: int = 2) -> str:
+    """Return the qualified name of the caller's caller.
+
+    ``depth=2`` skips this function and the immediate caller (resolve/reject).
+    """
+    try:
+        return sys._getframe(depth).f_code.co_qualname
+    except (ValueError, AttributeError):
+        return "unknown"
 
 
 class ResultError(Exception):
@@ -29,14 +41,19 @@ class Result(BaseModel, Generic[T]):
 
     @classmethod
     def resolve(cls, data: T) -> "Result[T]":
+        wide = get_wide_event()
+        caller = _caller_name()
+        stack = wide.setdefault("success_stack", [])
+        if caller not in stack:
+            stack.append(caller)
         return cls(data=data, error=Error())
 
     @classmethod
     def reject(cls, errmsg: str, status: Code = Code.INTERNAL_ERROR) -> "Result[T]":
         assert status != Code.SUCCESS, "status must not be SUCCESS"
         wide = get_wide_event()
-        wide.setdefault("errors", []).append(
-            {"status": str(status), "errmsg": errmsg}
+        wide.setdefault("error_stack", []).append(
+            {"caller": _caller_name(), "status": str(status), "errmsg": errmsg}
         )
         return cls(data=None, error=Error.init(status, errmsg))
 

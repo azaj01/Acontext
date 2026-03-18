@@ -54,7 +54,44 @@ def test_get_wide_event_throwaway_dict_does_not_pollute_contextvar():
 
 
 # ---------------------------------------------------------------------------
-# Result.reject appends errors to wide event
+# Result.resolve records deduplicated caller in success_stack
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_records_caller_in_success_stack():
+    event: dict = {}
+    set_wide_event(event)
+    try:
+        Result.resolve("a")
+        Result.resolve("b")
+        Result.resolve("c")
+        assert event["success_stack"] == ["test_resolve_records_caller_in_success_stack"]
+    finally:
+        clear_wide_event()
+
+
+def _helper_resolve():
+    return Result.resolve("from helper")
+
+
+def test_resolve_deduplicates_same_caller():
+    event: dict = {}
+    set_wide_event(event)
+    try:
+        Result.resolve("first")
+        _helper_resolve()
+        Result.resolve("second")
+        _helper_resolve()
+        assert event["success_stack"] == [
+            "test_resolve_deduplicates_same_caller",
+            "_helper_resolve",
+        ]
+    finally:
+        clear_wide_event()
+
+
+# ---------------------------------------------------------------------------
+# Result.reject appends to error_stack
 # ---------------------------------------------------------------------------
 
 
@@ -63,10 +100,10 @@ def test_reject_appends_error_to_wide_event():
     set_wide_event(event)
     try:
         Result.reject("something broke", Code.INTERNAL_ERROR)
-        assert "errors" in event
-        assert len(event["errors"]) == 1
-        assert event["errors"][0]["errmsg"] == "something broke"
-        assert event["errors"][0]["status"] == str(Code.INTERNAL_ERROR)
+        assert len(event["error_stack"]) == 1
+        assert event["error_stack"][0]["errmsg"] == "something broke"
+        assert event["error_stack"][0]["status"] == str(Code.INTERNAL_ERROR)
+        assert event["error_stack"][0]["caller"] == "test_reject_appends_error_to_wide_event"
     finally:
         clear_wide_event()
 
@@ -77,9 +114,9 @@ def test_reject_accumulates_multiple_errors():
     try:
         Result.reject("first", Code.BAD_REQUEST)
         Result.reject("second", Code.INTERNAL_ERROR)
-        assert len(event["errors"]) == 2
-        assert event["errors"][0]["errmsg"] == "first"
-        assert event["errors"][1]["errmsg"] == "second"
+        assert len(event["error_stack"]) == 2
+        assert event["error_stack"][0]["errmsg"] == "first"
+        assert event["error_stack"][1]["errmsg"] == "second"
     finally:
         clear_wide_event()
 

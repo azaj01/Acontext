@@ -37,6 +37,7 @@ async def insert_new_message(body: InsertNewMessage, message: Message):
         msg_status, eil = r.unpack()
         if eil or msg_status != "pending":
             wide["action"] = "skip_not_pending"
+            wide["_log_level"] = "debug"
             return
 
         r = await PD.get_project_config(session, body.project_id)

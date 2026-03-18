@@ -5,6 +5,7 @@ from anthropic.types import Message
 from time import perf_counter
 from ...env import LOG
 from ...schema.llm import LLMResponse
+from ...telemetry.log import get_wide_event
 
 
 def convert_openai_tool_to_anthropic_tool(tools: list[dict]) -> list[dict]:
@@ -108,14 +109,23 @@ async def anthropic_complete(
         )
         _end_s = perf_counter()
 
+        _input = response.usage.input_tokens
+        _output = response.usage.output_tokens
+        _cached = response.usage.cache_read_input_tokens or 0
+
+        wide = get_wide_event()
+        wide["llm_input_tokens"] = wide.get("llm_input_tokens", 0) + _input
+        wide["llm_output_tokens"] = wide.get("llm_output_tokens", 0) + _output
+        wide["llm_cached_tokens"] = wide.get("llm_cached_tokens", 0) + _cached
+
         LOG.info(
             "llm.complete",
             prompt_id=prompt_id,
             model=model,
-            cached_tokens=response.usage.cache_read_input_tokens,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-            total_tokens=response.usage.input_tokens + response.usage.output_tokens,
+            cached_tokens=_cached,
+            input_tokens=_input,
+            output_tokens=_output,
+            total_tokens=_input + _output,
             duration_s=round(_end_s - _start_s, 4),
         )
 

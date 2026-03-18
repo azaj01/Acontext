@@ -2,7 +2,6 @@
 # The publish() method includes retry logic to handle reconnection automatically.
 import asyncio
 import json
-import traceback
 from enum import StrEnum
 from functools import partial
 from pydantic import ValidationError, BaseModel
@@ -17,6 +16,7 @@ from aio_pika.abc import AbstractConnection, AbstractChannel, AbstractQueue
 from ..env import LOG, DEFAULT_CORE_CONFIG
 from ..telemetry.log import (
     bound_logging_vars,
+    get_logging_contextvars,
     set_wide_event,
     clear_wide_event,
 )
@@ -29,6 +29,22 @@ try:
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
+
+
+def _inject_otel_trace(target: dict) -> None:
+    """Snapshot current OTel span's trace_id/span_id into *target* dict."""
+    if not OTEL_AVAILABLE:
+        return
+    try:
+        span = trace.get_current_span()
+        if span is None:
+            return
+        ctx = span.get_span_context()
+        if ctx is not None and ctx.trace_id != 0:
+            target["trace_id"] = format(ctx.trace_id, "032x")
+            target["span_id"] = format(ctx.span_id, "016x")
+    except Exception:
+        pass
 
 
 def _extract_trace_context_from_headers(message: Message) -> Optional[Any]:
@@ -77,7 +93,10 @@ _FRAMEWORK_WIDE_EVENT_KEYS = frozenset(
         "timeout_seconds",
         "duration_ms",
         "_log_level",
+        "trace_id",
+        "span_id",
     }
+    | LOGGING_FIELDS
 )
 
 
@@ -257,6 +276,8 @@ class AsyncSingleThreadMQConsumer:
                                 if extracted_context and OTEL_AVAILABLE:
                                     token = otel_context.attach(extracted_context)
                                     try:
+                                        wide_event.update(get_logging_contextvars())
+                                        _inject_otel_trace(wide_event)
                                         await asyncio.wait_for(
                                             config.handler(validated_body, message),
                                             timeout=config.timeout,
@@ -264,6 +285,7 @@ class AsyncSingleThreadMQConsumer:
                                     finally:
                                         otel_context.detach(token)
                                 else:
+                                    wide_event.update(get_logging_contextvars())
                                     await asyncio.wait_for(
                                         config.handler(validated_body, message),
                                         timeout=config.timeout,
@@ -650,7 +672,7 @@ class AsyncSingleThreadMQConsumer:
 
                 for task in done:
                     try:
-                        r = task.result()
+                        task.result()
                         if task in self._consumer_loop_tasks:
                             self._consumer_loop_tasks.remove(task)
                     except Exception as e:
