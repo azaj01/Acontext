@@ -4,12 +4,10 @@ import { Geist, Geist_Mono, Outfit } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TopNav } from "@/components/top-nav";
 import { NProgressProvider } from "@/components/nprogress";
-import {
-  getCurrentUserOptional,
-  getPrices,
-} from "@/lib/supabase";
+import { getCurrentUserOptional, getPrices } from "@/lib/supabase";
 import { Toaster } from "@/components/ui/sonner";
 import { ContentWrapper } from "@/components/content-wrapper";
+import { GoogleAnalytics, GoogleTagManager } from "@next/third-parties/google";
 
 import "./globals.css";
 
@@ -64,6 +62,8 @@ export default async function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         suppressHydrationWarning
       >
+        <GoogleTagManager gtmId="GTM-KQ7H272M" />
+        <GoogleAnalytics gaId="G-Y2R02LY9NV" />
         <Script
           id="theme-init"
           strategy="beforeInteractive"
