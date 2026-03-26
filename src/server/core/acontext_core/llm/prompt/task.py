@@ -46,14 +46,22 @@ class TaskPrompt(BasePrompt):
 
 ### 4. Record Progress
 - Use `append_task_progress` to record **milestone-level** summaries, NOT per-step logs.
-- Aim for 1–3 progress entries per task. Combine related steps into one entry.
+- Record TWO kinds of progress:
+  - **Agent progress**: what the agent accomplished (tool calls, code changes, actions taken)
+  - **User additional info**: clarifications, corrections, supplementary context, or domain knowledge the user provides during the task
+- Aim for 1–3 progress entries per kind per task. Combine related steps into one entry.
 - Keep each entry short — one sentence, max ~150 characters.
 - Be specific (file paths, URLs, values) but omit trivial details.
+- For user additional info, prefix with "User:" to distinguish from agent progress.
 - Examples:
-  - Good: "Created login component in src/Login.tsx with form validation"
-  - Good: "Fixed auth bug: token refresh was skipping expiry check in auth.py"
+  - Good (agent): "Created login component in src/Login.tsx with form validation"
+  - Good (agent): "Fixed auth bug: token refresh was skipping expiry check in auth.py"
+  - Good (user info): "User: database host is db.prod.internal, TLS required"
+  - Good (user info): "User: pagination should default to 50 items, max 200"
+  - Good (user info): "User: the deploy target is AWS ECS, not Kubernetes"
   - Bad: "Started working on the login feature" (too vague)
   - Bad: "Read the file, then found the function, then edited line 42, then saved" (too granular — combine into one milestone)
+- Note: user additional info is task-specific context (relates to a particular task). For task-independent preferences or personal info, use `submit_user_preference` instead.
 
 ### 5. Submit User Preferences
 - Use `submit_user_preference` when messages reveal user preferences, personal info, or general constraints
@@ -88,7 +96,7 @@ Before calling tools, use `report_thinking` to briefly address:
 4. New tasks to create? (each task = one user request, NOT agent sub-steps; use user's exact words)
 5. Which messages contribute to planning vs. specific tasks?
 6. Any user preferences, personal info, or general constraints to submit?
-7. What specific progress to record for which tasks? (agent plan steps go here, not as new tasks)
+7. What specific progress to record for which tasks? (agent plan steps AND user-provided additional info go here, not as new tasks)
 8. Which task statuses to update?
 9. Which tools can be called concurrently?
 

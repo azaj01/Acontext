@@ -50,8 +50,10 @@ _append_task_progress_tool = (
         ToolSchema(
             function={
                 "name": "append_task_progress",
-                "description": """Record a milestone-level progress summary for a task. Aim for 1–3 entries per task, not one per step.
-- Combine related steps into a single entry. Keep it under ~150 characters.
+                "description": """Record a milestone-level progress summary for a task. Captures both agent progress and user-provided additional info.
+- Agent progress: what the agent accomplished (e.g. code changes, actions taken).
+- User additional info: clarifications, corrections, or supplementary context from the user. Prefix these with "User:" (e.g. "User: deploy target is AWS ECS").
+- Aim for 1–3 entries per kind per task. Combine related steps into one entry. Keep it under ~150 characters.
 - Be specific (file paths, values) but omit trivial details.
 - Cannot append progress to 'success' or 'failed' tasks — update status to 'running' first.""",
                 "parameters": {
@@ -63,7 +65,7 @@ _append_task_progress_tool = (
                         },
                         "progress": {
                             "type": "string",
-                            "description": "One-sentence milestone summary (~150 chars max). Combine related steps. E.g. 'Created login component in src/Login.tsx with form validation'.",
+                            "description": "One-sentence milestone summary (~150 chars max). For agent actions: 'Created login component in src/Login.tsx with form validation'. For user info: prefix with 'User:' e.g. 'User: database host is db.prod.internal, TLS required'.",
                         },
                     },
                     "required": ["task_order", "progress"],
