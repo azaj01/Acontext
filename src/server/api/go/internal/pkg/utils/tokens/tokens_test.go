@@ -67,6 +67,68 @@ func TestParseToken(t *testing.T) {
 	}
 }
 
+func TestParseProjectToken(t *testing.T) {
+	prefix := "sk-ac-"
+
+	tests := []struct {
+		name       string
+		raw        string
+		wantAuth   string
+		wantCompact bool
+		wantOK     bool
+	}{
+		{
+			name:     "legacy format",
+			raw:      "sk-ac-somelegacysecretvalue",
+			wantAuth: "somelegacysecretvalue",
+			wantOK:   true,
+		},
+		{
+			name:       "compact format (76 chars)",
+			raw:        "sk-ac-AaGyw9Tl9qe4ydDh8qO0xdZNkrobQvwHWFRsnp5a3QtfbaDSDJQeRHxXPr4bGpc0g130EqBSjRNF",
+			wantAuth:   "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6",
+			wantCompact: true,
+			wantOK:     true,
+		},
+		{
+			name:   "wrong prefix",
+			raw:    "sk-xx-secret",
+			wantOK: false,
+		},
+		{
+			name:   "empty string",
+			raw:    "",
+			wantOK: false,
+		},
+		{
+			name:   "prefix only",
+			raw:    "sk-ac-",
+			wantOK: false,
+		},
+		{
+			name:     "short token treated as legacy",
+			raw:      "sk-ac-short",
+			wantAuth: "short",
+			wantOK:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, ok := ParseProjectToken(tt.raw, prefix)
+			assert.Equal(t, tt.wantOK, ok)
+			if ok {
+				assert.Equal(t, tt.wantAuth, parsed.AuthSecret)
+				if tt.wantCompact {
+					assert.NotEmpty(t, parsed.CompactRaw)
+				} else {
+					assert.Empty(t, parsed.CompactRaw)
+				}
+			}
+		})
+	}
+}
+
 func TestHMAC256Hex(t *testing.T) {
 	tests := []struct {
 		name     string

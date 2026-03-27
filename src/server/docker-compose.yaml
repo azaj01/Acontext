@@ -225,7 +225,8 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-release}
       API_EXPORT_PORT: ${API_EXPORT_PORT:-8029}
-      ROOT_API_BEARER_TOKEN: ${ROOT_API_BEARER_TOKEN:-your-root-api-bearer-token}
+      ROOT_API_BEARER_TOKEN: ${ROOT_API_BEARER_TOKEN:-AaGyw9Tl9qe4ydDh8qO0xdZNkrobQvwHWFRsnp5a3QtfbaDSDJQeRHxXPr4bGpc0g130EqBSjRNF}
+      ROOT_SECRET_PEPPER: ${ROOT_SECRET_PEPPER:-your-secret-pepper}
       DATABASE_HOST: ${DATABASE_HOST:-acontext-server-pg}
       DATABASE_USER: ${DATABASE_USER:-acontext}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD:-helloworld}
@@ -249,6 +250,7 @@ services:
       CORE_BASE_URL: http://acontext-server-core:8000
       OTEL_EXPORTER_OTLP_ENDPOINT: acontext-server-jaeger:4317
       ARTIFACT_MAX_UPLOAD_SIZE_BYTES: ${ARTIFACT_MAX_UPLOAD_SIZE_BYTES:-16777216}
+      APP_EXTERNALURL: ${APP_EXTERNALURL:-http://localhost:${API_EXPORT_PORT:-8029}}
     ports:
       - "${API_EXPORT_PORT:-8029}:8029"
     healthcheck:
@@ -290,7 +292,8 @@ services:
       NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://localhost:3000}
       NEXT_PUBLIC_BASE_PATH: ""
       API_SERVER_URL: http://acontext-server-api:8029
-      ROOT_API_BEARER_TOKEN: ${ROOT_API_BEARER_TOKEN:-your-root-api-bearer-token}
+      ROOT_API_BEARER_TOKEN: ${ROOT_API_BEARER_TOKEN:-AaGyw9Tl9qe4ydDh8qO0xdZNkrobQvwHWFRsnp5a3QtfbaDSDJQeRHxXPr4bGpc0g130EqBSjRNF}
+      ROOT_SECRET_PEPPER: ${ROOT_SECRET_PEPPER:-your-secret-pepper}
       DATABASE_URL: postgresql://${DATABASE_USER:-acontext}:${DATABASE_PASSWORD:-helloworld}@acontext-server-pg:5432/${DATABASE_NAME:-acontext}
       JAEGER_INTERNAL_URL: http://acontext-server-jaeger:16686
       JAEGER_URL: ${JAEGER_URL:-http://localhost:16686}

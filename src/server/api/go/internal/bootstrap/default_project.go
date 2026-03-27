@@ -21,7 +21,14 @@ func EnsureDefaultProjectExists(ctx context.Context, db *gorm.DB, cfg *config.Co
 		return nil
 	}
 
-	lookup := tokens.HMAC256Hex(pepper, secret)
+	// Parse token to extract auth_secret (works for all formats: compact, dot-separated, legacy).
+	parsed, ok := tokens.ParseProjectToken(cfg.Root.ProjectBearerTokenPrefix+secret, cfg.Root.ProjectBearerTokenPrefix)
+	if !ok {
+		return nil
+	}
+	authSecret := parsed.AuthSecret
+
+	lookup := tokens.HMAC256Hex(pepper, authSecret)
 
 	// First, check if a default project exists by looking for the special config field
 	var defaultProject model.Project
@@ -32,7 +39,7 @@ func EnsureDefaultProjectExists(ctx context.Context, db *gorm.DB, cfg *config.Co
 	switch err {
 	case nil:
 		// Default project exists, update its secret
-		phc, err := secrets.HashSecret(secret, pepper)
+		phc, err := secrets.HashSecret(authSecret, pepper)
 		if err != nil {
 			return err
 		}
@@ -50,7 +57,7 @@ func EnsureDefaultProjectExists(ctx context.Context, db *gorm.DB, cfg *config.Co
 
 	case gorm.ErrRecordNotFound:
 		// No default project exists, create a new one
-		phc, err := secrets.HashSecret(secret, pepper)
+		phc, err := secrets.HashSecret(authSecret, pepper)
 		if err != nil {
 			return err
 		}

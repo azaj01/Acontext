@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -8,19 +9,40 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/memodb-io/Acontext/internal/config"
+	"github.com/memodb-io/Acontext/internal/infra/blob"
+	"github.com/memodb-io/Acontext/internal/middleware"
+	"github.com/memodb-io/Acontext/internal/modules/model"
+	"github.com/memodb-io/Acontext/internal/modules/repo"
 	"github.com/memodb-io/Acontext/internal/modules/serializer"
 	"github.com/memodb-io/Acontext/internal/modules/service"
+	"gorm.io/gorm"
 )
 
 type AdminHandler struct {
-	projectSvc service.ProjectService
+	projectSvc   service.ProjectService
+	projectRepo  repo.ProjectRepo
+	s3           *blob.S3Deps
+	assetRefRepo repo.AssetReferenceRepo
+	db           *gorm.DB
+	rdb          *redis.Client
+	cfg          *config.Config
 }
 
-func NewAdminHandler(projectSvc service.ProjectService) *AdminHandler {
+func NewAdminHandler(projectSvc service.ProjectService, projectRepo repo.ProjectRepo, s3 *blob.S3Deps, assetRefRepo repo.AssetReferenceRepo, db *gorm.DB, rdb *redis.Client, cfg *config.Config) *AdminHandler {
 	return &AdminHandler{
-		projectSvc: projectSvc,
+		projectSvc:   projectSvc,
+		projectRepo:  projectRepo,
+		s3:           s3,
+		assetRefRepo: assetRefRepo,
+		db:           db,
+		rdb:          rdb,
+		cfg:          cfg,
 	}
 }
+
 
 type CreateProjectReq struct {
 	Configs map[string]interface{} `json:"configs,omitempty"`
@@ -85,35 +107,6 @@ func (h *AdminHandler) DeleteProject(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, serializer.Response{Msg: "project deleted"})
-}
-
-// UpdateProjectSecretKey godoc
-//
-//	@Summary		Update project secret key
-//	@Description	Generate a new secret key for a project
-//	@Tags			admin
-//	@Accept			json
-//	@Produce		json
-//	@Param			project_id	path		string	true	"Project ID"	format(uuid)
-//	@Success		200			{object}	serializer.Response{data=service.UpdateSecretKeyOutput}
-//	@Failure		400			{object}	serializer.Response
-//	@Failure		500			{object}	serializer.Response
-//	@Router			/admin/v1/project/{project_id}/secret_key [put]
-func (h *AdminHandler) UpdateProjectSecretKey(c *gin.Context) {
-	projectIDStr := c.Param("project_id")
-	projectID, err := uuid.Parse(projectIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, serializer.ParamErr("invalid project id", err))
-		return
-	}
-
-	output, err := h.projectSvc.UpdateSecretKey(c.Request.Context(), projectID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, serializer.DBErr("", err))
-		return
-	}
-
-	c.JSON(http.StatusOK, serializer.Response{Data: output})
 }
 
 // AnalyzeProjectUsages godoc
@@ -243,3 +236,105 @@ func (h *AdminHandler) AnalyzeProjectMetrics(c *gin.Context) {
 	// Return the response from Jaeger
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), body)
 }
+
+// EncryptProject encrypts all existing S3 data for a project and enables encryption.
+// Requires project API key as Bearer auth (uses ProjectAuth middleware).
+func (h *AdminHandler) EncryptProject(c *gin.Context) {
+	encryptProject(c, h.db, h.rdb, h.s3, h.assetRefRepo)
+}
+
+// DecryptProject decrypts all existing S3 data for a project and disables encryption.
+// Requires project API key as Bearer auth (uses ProjectAuth middleware).
+func (h *AdminHandler) DecryptProject(c *gin.Context) {
+	decryptProject(c, h.db, h.rdb, h.s3, h.assetRefRepo)
+}
+
+// RotateProjectSecretKeyAdmin rotates the project API key (admin JWT auth).
+// Admin does not have the project API key, so master_key cannot be preserved.
+// A new master_key is generated. Only allowed for non-encrypted projects.
+//
+//	@Summary		Rotate project secret key (admin)
+//	@Description	Generate a new secret key for a non-encrypted project. Blocked for encrypted projects.
+//	@Tags			admin
+//	@Produce		json
+//	@Param			project_id	path		string	true	"Project ID"	format(uuid)
+//	@Success		200			{object}	serializer.Response{data=service.UpdateSecretKeyOutput}
+//	@Failure		400			{object}	serializer.Response
+//	@Failure		500			{object}	serializer.Response
+//	@Router			/admin/v1/project/{project_id}/secret_key [put]
+func (h *AdminHandler) RotateProjectSecretKeyAdmin(c *gin.Context) {
+	projectIDStr := c.Param("project_id")
+	projectID, err := uuid.Parse(projectIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr("invalid project id", err))
+		return
+	}
+
+	project, dbErr := h.projectRepo.GetByID(c.Request.Context(), projectID)
+	if dbErr != nil {
+		c.JSON(http.StatusInternalServerError, serializer.DBErr("", dbErr))
+		return
+	}
+	if project.EncryptionEnabled {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr(
+			"cannot rotate key for encrypted projects via admin API — use the project Bearer token endpoint to preserve the master key", nil))
+		return
+	}
+
+	// Capture old HMAC before rotation so we can invalidate the cache
+	oldHMAC := project.SecretKeyHMAC
+
+	// masterKey=nil → RotateSecretKey generates a new one
+	output, err := h.projectSvc.RotateSecretKey(c.Request.Context(), projectID, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, serializer.DBErr("", err))
+		return
+	}
+
+	// Invalidate old HMAC cache so the old key can no longer authenticate
+	middleware.InvalidateProjectAuthCache(h.rdb, oldHMAC)
+
+	c.JSON(http.StatusOK, serializer.Response{Data: output})
+}
+
+// RotateProjectSecretKey rotates the project API key.
+// Requires the project API key as Bearer auth (uses ProjectAuth middleware).
+// Generates a new auth_secret and re-wraps the existing master_key.
+// S3 objects are NOT touched — the same master_key (KEK) is preserved.
+// For legacy keys without master_key, a new master_key is generated.
+func (h *AdminHandler) RotateProjectSecretKey(c *gin.Context) {
+	project, ok := c.MustGet("project").(*model.Project)
+	if !ok {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr("", fmt.Errorf("project not found")))
+		return
+	}
+
+	// Get the current KEK (master_key) from context — nil for legacy keys.
+	masterKey := middleware.GetUserKEK(c)
+
+	// Guard: if the project has encryption enabled, we MUST have the current
+	// master_key to re-wrap it.  Legacy (v1) tokens don't carry a master_key,
+	// so rotating them would generate a brand-new key and orphan all existing
+	// S3 DEKs — irreversible data loss.
+	if project.EncryptionEnabled && masterKey == nil {
+		c.JSON(http.StatusBadRequest, serializer.ParamErr(
+			"cannot rotate: project has encryption enabled but current API key has no embedded master key; re-issue a v2 key first", nil))
+		return
+	}
+
+	// Capture old HMAC before rotation so we can invalidate the cache
+	oldHMAC := project.SecretKeyHMAC
+
+	// Generates new auth_secret, re-wraps the same master_key.
+	output, err := h.projectSvc.RotateSecretKey(c.Request.Context(), project.ID, masterKey)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, serializer.DBErr("failed to rotate key", err))
+		return
+	}
+
+	// Invalidate old HMAC cache so the old key can no longer authenticate
+	middleware.InvalidateProjectAuthCache(h.rdb, oldHMAC)
+
+	c.JSON(http.StatusOK, serializer.Response{Data: output})
+}
+

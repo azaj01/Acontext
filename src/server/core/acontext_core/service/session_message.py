@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from ..env import LOG, DEFAULT_CORE_CONFIG
 from ..infra.db import DB_CLIENT
 from ..infra.async_mq import (
@@ -13,6 +14,7 @@ from ..schema.mq.session import InsertNewMessage
 from ..schema.utils import asUUID
 from ..schema.result import Result
 from .constants import EX, RK
+from .data import learning_space as LS
 from .data import message as MD
 from .data import project as PD
 from .controller import message as MC
@@ -85,6 +87,20 @@ async def insert_new_message(body: InsertNewMessage, message: Message):
     wide["lock_acquired"] = True
     wide["lock_retries"] = body.lock_retry_count
     wide["process_rightnow"] = body.process_rightnow
+
+    # Decode user KEK from base64 if present in the message.
+    # Hard-fail on invalid KEK — continuing with None would silently store
+    # plaintext, inconsistent with skill_learner.py's hard-fail pattern.
+    user_kek_bytes = None
+    if body.user_kek:
+        try:
+            user_kek_bytes = base64.b64decode(body.user_kek)
+        except Exception:
+            LOG.error("session_message.invalid_user_kek", session_id=str(body.session_id))
+            async with DB_CLIENT.get_session_context() as db_session:
+                await LS.update_session_status(db_session, body.session_id, "failed")
+            return
+
     try:
         if pending_count > (
             project_config.project_session_message_buffer_max_overflow
@@ -100,7 +116,7 @@ async def insert_new_message(body: InsertNewMessage, message: Message):
         else:
             wide["action"] = "process"
         await MC.process_session_pending_message(
-            project_config, body.project_id, body.session_id
+            project_config, body.project_id, body.session_id, user_kek=user_kek_bytes
         )
     finally:
         await release_redis_lock(
