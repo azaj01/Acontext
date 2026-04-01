@@ -11,7 +11,11 @@ import {
   EditStrategySchema,
   CopySessionResult,
   CopySessionResultSchema,
+  FlagResponse,
+  FlagResponseSchema,
   GetMessagesOutput,
+  PatchMessageMetaRespSchema,
+  PatchConfigsRespSchema,
   GetMessagesOutputSchema,
   GetTasksOutput,
   GetTasksOutputSchema,
@@ -373,7 +377,7 @@ export class SessionsAPI {
         limit: options?.limit ?? null,
         cursor: options?.cursor ?? null,
         with_asset_public_url: options?.withAssetPublicUrl ?? null,
-        time_desc: options?.timeDesc ?? true, // Default to true
+        time_desc: options?.timeDesc ?? null,
       })
     );
     if (options?.withEvents !== undefined && options?.withEvents !== null) {
@@ -392,9 +396,12 @@ export class SessionsAPI {
     return GetMessagesOutputSchema.parse(data);
   }
 
-  async flush(sessionId: string): Promise<{ status: number; errmsg: string }> {
+  async flush(sessionId: string): Promise<FlagResponse> {
     const data = await this.requester.request('POST', `/session/${sessionId}/flush`);
-    return data as { status: number; errmsg: string };
+    if (data && typeof data === 'object') {
+      return FlagResponseSchema.parse(data);
+    }
+    return { status: 0, errmsg: '' };
   }
 
   /**
@@ -457,7 +464,7 @@ export class SessionsAPI {
     const data = await this.requester.request('PATCH', `/session/${sessionId}/messages/${messageId}/meta`, {
       jsonData: payload,
     });
-    return (data as { meta: Record<string, unknown> }).meta ?? {};
+    return PatchMessageMetaRespSchema.parse(data).meta;
   }
 
   /**
@@ -492,7 +499,7 @@ export class SessionsAPI {
     const data = await this.requester.request('PATCH', `/session/${sessionId}/configs`, {
       jsonData: payload,
     });
-    return (data as { configs: Record<string, unknown> }).configs ?? {};
+    return PatchConfigsRespSchema.parse(data).configs;
   }
 
   /**

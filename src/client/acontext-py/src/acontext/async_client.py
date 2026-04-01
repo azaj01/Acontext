@@ -197,7 +197,8 @@ class AcontextAsyncClient:
             error: str | None = None
             if payload and isinstance(payload, Mapping):
                 message = str(payload.get("msg") or payload.get("message") or message)
-                error = payload.get("error")
+                error_val = payload.get("error")
+                error = error_val if isinstance(error_val, str) else None
                 try:
                     code_val = payload.get("code")
                     if isinstance(code_val, int):
@@ -269,9 +270,31 @@ class AcontextAsyncClient:
             raise TransportError(str(exc)) from exc
 
         if response.status_code >= 400:
+            # Try to parse JSON error body for detailed error info
+            # (API returns JSON errors even for binary endpoints)
+            content_type = response.headers.get("content-type", "")
+            message = response.reason_phrase
+            code: int | None = None
+            error: str | None = None
+            payload: Mapping[str, Any] | None = None
+            if "application/json" in content_type:
+                try:
+                    parsed = response.json()
+                    if isinstance(parsed, Mapping):
+                        payload = parsed
+                        message = str(parsed.get("msg") or parsed.get("message") or message)
+                        error = parsed.get("error")
+                        code_val = parsed.get("code")
+                        if isinstance(code_val, int):
+                            code = code_val
+                except ValueError:
+                    pass
             raise APIError(
                 status_code=response.status_code,
-                message=response.reason_phrase,
+                code=code,
+                message=message,
+                error=error,
+                payload=payload,
             )
 
         # Return raw bytes without decoding
